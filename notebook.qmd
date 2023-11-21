@@ -1,0 +1,203 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+"""
+This script extracts features from images, trains a classifier, and stores the classifier in a file.
+It uses AWS S3 to store the images and features.
+The script loads the annotations for the images from a JSON file and the labelset from a CSV file.
+It then extracts features from the images using an EfficientNetExtractor and stores them in S3.
+Finally, it trains a classifier using the extracted features and stores it in a file.
+"""
+import csv
+import json
+import logging
+import traceback
+from operator import itemgetter
+import os
+from datetime import datetime
+from botocore.exceptions import NoCredentialsError, ClientError
+from pathlib import Path
+from spacer import config
+from scripts.docker import runtimes
+from spacer.tasks import process_job, classify_image, extract_features, train_classifier, classify_features
+from spacer.storage import load_image, store_image
+from spacer.messages import JobMsg, DataLocation, ExtractFeaturesMsg
+from spacer.extract_features import EfficientNetExtractor
+from spacer.messages import (
+    DataLocation,
+    ExtractFeaturesMsg, 
+    ExtractFeaturesReturnMsg, 
+    TrainClassifierMsg, 
+    TrainClassifierReturnMsg, 
+    ClassifyFeaturesMsg, 
+    ClassifyImageMsg, 
+    ClassifyReturnMsg, JobMsg, JobReturnMsg
+)
+
+from spacer.tasks import classify_features, extract_features, train_classifier
+
+# Load the secret.json file
+with open('secrets.json', 'r') as f:
+    secrets = json.load(f)
+# Use docker/runtimes.py to cr
+
+```
+
+```{python}
+import boto3
+# Create an S3 resource using credentials from the secret.json file
+s3 = boto3.resource(
+    's3',
+    region_name=secrets['AWS_REGION'],
+    aws_access_key_id=secrets['AWS_ACCESS_KEY_ID'],
+    aws_secret_access_key=secrets['AWS_SECRET_ACCESS_KEY']
+)
+
+# The bucket you have read permissions for
+bucket_name = 'pyspacer-test'  
+# Create a bucket object
+bucket = s3.Bucket(bucket_name)
+try:
+    # List objects within the bucket
+    for obj in bucket.objects.all():
+        print(f'Object: {obj.key}')
+except botocore.exceptions.ClientError as e:
+    print(f'An error occurred: {e}')
+except botocore.exceptions.NoCredentialsError as e:
+    print("Credentials not available")
+
+```
+
+## Runtimes.py 
+
+Using S3 as storage for images and features. 
+
+```{python}
+#
+image_loc = DataLocation(storage_type='s3',
+                         key='images-annotated/23_7168.JPG',
+                         bucketname=config.TEST_BUCKET)
+```
+
+```{python}
+nbr_rowcols = 10
+image_size = 1000
+org_img = load_image(image_loc)
+
+img = org_img.resize((image_size, image_size)).convert("RGB")
+
+img_loc = DataLocation(storage_type='memory',
+key='tmp/{}.jpg'.
+format(str(datetime.now()).replace(' ', '_')))
+```
+
+```{python}
+store_image(loc = img_loc, img = img)
+
+```
+```{python}
+feature_loc = DataLocation(storage_type='s3',
+                           key='features/23_7168.JPG.json',
+                           bucketname=config.TEST_BUCKET)
+```
+
+```{python}
+extractor = 'efficientnet_b0_ver1'
+JobMsg(
+        task_name='extract_features',
+        tasks = [ExtractFeaturesMsg(
+            job_token='regression_job',
+            extractor=extractor,
+            rowcols=[(i, i) for i in list(range(nbr_rowcols))],
+            image_loc=img_loc,
+            feature_loc=feature_loc
+        )])
+```
+
+```{python}
+job_msg = runtimes.make_job(nbr_rowcols = 10,image_size = 1000,image_key='images-annotated/23_7168.JPG', extractor = 'efficientnet_b0_ver1')
+```
+
+```{python}
+job_msg.tasks['extractor']
+```
+
+```{python}
+res = process_job(job_msg)
+```
+
+Print everything in config
+
+```{python}
+for key, value in config.__dict__.items():
+    if not key.startswith('__'):
+        print(key, value)
+```
+
+
+```{python}
+run = {
+    'extract_features': extract_features,
+    'train_classifier': train_classifier,
+    'classify_features': classify_features,
+    'classify_image': classify_image,
+}
+extractor = run['extract_features']
+results = []
+img = load_image(image_loc)
+rowcols = [(1000,1000)]
+with config.log_entry_and_exit('actual extraction'):
+    features, return_msg = extractor(img, rowcols)          
+
+
+
+```
+
+
+## Additional troubleshooting 
+
+```{python}
+nbr_rowcols = 10
+image_size = 1000
+image_key='images-annotated/23_7168.JPG'
+extractor = 'efficientnet_b0_ver1'
+
+org_img_loc = DataLocation(storage_type='s3',
+                               key=image_key,
+                               bucketname=config.TEST_BUCKET)
+
+```
+
+```{python}
+org_img = load_image(org_img_loc)
+```
+
+```{python}
+img = org_img.resize((image_size, image_size)).convert("RGB")
+
+img_loc = DataLocation(storage_type='memory',
+                        key='tmp/{}.jpg'.
+                        format(str(datetime.now()).replace(' ', '_')))
+```
+
+
+```{python}
+from spacer.storage import storage_factory
+storage = storage_factory(img_loc.storage_type)
+```
+
+```{python}
+from io import BytesIO
+with BytesIO() as stream:
+    img.save(stream, format="JPEG")
+    stream.seek(0)
+    storage.store(img_loc, stream)
+```
+
+```{python}
+
+img_loc
+```

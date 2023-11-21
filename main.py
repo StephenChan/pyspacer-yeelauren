@@ -9,12 +9,14 @@ import csv
 import json
 from operator import itemgetter
 import os
-import boto3
-import botocore.exceptions
+from spacer.data_classes import ImageLabels
 from botocore.exceptions import NoCredentialsError, ClientError
 from pathlib import Path
 from spacer import config
-from spacer.data_classes import ImageLabels
+from scripts.docker import runtimes
+from spacer.tasks import process_job
+from spacer.storage import load_image, store_image
+from spacer.messages import JobMsg, DataLocation, ExtractFeaturesMsg
 from spacer.extract_features import EfficientNetExtractor
 from spacer.messages import (
     ClassifyFeaturesMsg,
@@ -27,26 +29,38 @@ from spacer.tasks import classify_features, extract_features, train_classifier
 # Load the secret.json file
 with open('secrets.json', 'r') as f:
     secrets = json.load(f)
-# Create an S3 resource using credentials from the secret.json file
-s3 = boto3.resource(
-    's3',
-    region_name=secrets['AWS_REGION'],
-    aws_access_key_id=secrets['AWS_ACCESS_KEY_ID'],
-    aws_secret_access_key=secrets['AWS_SECRET_ACCESS_KEY']
-)
+# Use docker/runtimes.py to create a job message
 
+#job_msg = runtimes.make_job(10, 1000, 'efficientnet_b0_ver1')
+ # Process the job using the process_job function from runtimes.py
+#job_return_msg = process_job(job_msg)
 # The bucket you have read permissions for
-bucket_name = 'pyspacer-test'  
+bucketname = 'pyspacer-test' 
+image_loc = DataLocation(storage_type='s3',
+                        key='images-annotated/23_7168.JPG',
+                        bucketname=bucketname)
+                         
+                         
+
+# Create an S3 resource using credentials from the secret.json file
+# s3 = boto3.resource(
+#     's3',
+#     region_name=secrets['AWS_REGION'],
+#     aws_access_key_id=secrets['AWS_ACCESS_KEY_ID'],
+#     aws_secret_access_key=secrets['AWS_SECRET_ACCESS_KEY']
+# )
+
+ 
 # Create a bucket object
-bucket = s3.Bucket(bucket_name)
-try:
-    # List objects within the bucket
-    for obj in bucket.objects.all():
-        print(f'Object: {obj.key}')
-except botocore.exceptions.ClientError as e:
-    print(f'An error occurred: {e}')
-except botocore.exceptions.NoCredentialsError as e:
-    print("Credentials not available")
+# bucket = s3.Bucket(bucket_name)
+# try:
+#     # List objects within the bucket
+#     for obj in bucket.objects.all():
+#         print(f'Object: {obj.key}')
+# except botocore.exceptions.ClientError as e:
+#     print(f'An error occurred: {e}')
+# except botocore.exceptions.NoCredentialsError as e:
+#     print("Credentials not available")
 
 # Module directory is local directory
 module_dir = Path.cwd()
@@ -55,12 +69,12 @@ TOP_SCORES_PER_POINT = 5
 
 # Create client
 
-s3_client = boto3.client(
-    's3',
-    region_name=secrets['AWS_REGION'],
-    aws_access_key_id=secrets['AWS_ACCESS_KEY_ID'],
-    aws_secret_access_key=secrets['AWS_SECRET_ACCESS_KEY']
-)
+# s3_client = boto3.client(
+#     's3',
+#     region_name=secrets['AWS_REGION'],
+#     aws_access_key_id=secrets['AWS_ACCESS_KEY_ID'],
+#     aws_secret_access_key=secrets['AWS_SECRET_ACCESS_KEY']
+# )
 
 # Download everything following the same folder structure in the bucket
 # Should add a test here for file size, user prompt, etc.
@@ -83,21 +97,20 @@ if __name__ == '__main__':
     local_directory = Path.cwd()
 
     # List and download all objects from the bucket
-    paginator = s3_client.get_paginator('list_objects_v2')
-    for page in paginator.paginate(Bucket=bucket_name):
-        for obj in page.get('Contents', []):
-            # Define the local path where the file should be downloaded
-            local_file_path = local_directory / obj['Key']
-            local_file_dir = local_file_path.parent
+    # paginator = s3_client.get_paginator('list_objects_v2')
+    # for page in paginator.paginate(Bucket=bucket_name):
+    #     for obj in page.get('Contents', []):
+    #         # Define the local path where the file should be downloaded
+    #         local_file_path = local_directory / obj['Key']
+    #         local_file_dir = local_file_path.parent
 
-            # Create directories if they don't exist
-            os.makedirs(local_file_dir, exist_ok=True)
+    #         os.makedirs(local_file_dir, exist_ok=True)
 
-            # Download the file
-            s3_client.download_file(bucket_name, obj['Key'], str(local_file_path))
-            print(f"Downloaded {obj['Key']} to {local_file_path}")
+    #         # Download the file
+    #         s3_client.download_file(bucket_name, obj['Key'], str(local_file_path))
+    #         print(f"Downloaded {obj['Key']} to {local_file_path}")
 
-    print("Download completed")
+    # print("Download completed")
     with open(module_dir / 'annotations.json') as f:
         all_annotations = json.load(f)
 
@@ -125,7 +138,6 @@ if __name__ == '__main__':
         feature_filepath = image_to_feature_filepath(image_filepath)
         image_id = image_filepath_to_id(image_filepath)
         annotations = all_annotations[image_id]
-
         message = ExtractFeaturesMsg(
             job_token=image_filepath.name,
             extractor=EfficientNetExtractor(
