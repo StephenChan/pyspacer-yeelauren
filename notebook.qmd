@@ -39,165 +39,251 @@ from spacer.messages import (
 
 from spacer.tasks import classify_features, extract_features, train_classifier
 
-# Load the secret.json file
-with open('secrets.json', 'r') as f:
-    secrets = json.load(f)
-# Use docker/runtimes.py to cr
 
 ```
 
+# Query coralnet
+
+
+- for a given folder/project name 
+- get the object keys needed for for jobmsg and to train the classifier
+- get the labelset for the project
+- get the annotations for the project
+- get the images for the project
+- get the featuresvectors for the project
+
+## Get the object keys needed for for jobmsg and to train the classifier
+
 ```{python}
+import json
 import boto3
-# Create an S3 resource using credentials from the secret.json file
-s3 = boto3.resource(
-    's3',
-    region_name=secrets['AWS_REGION'],
-    aws_access_key_id=secrets['AWS_ACCESS_KEY_ID'],
-    aws_secret_access_key=secrets['AWS_SECRET_ACCESS_KEY']
-)
+from botocore.exceptions import ClientError, BotoCoreError
+import os
+import pickle
+import pandas as pd
+from datetime import datetime, timedelta
 
-# The bucket you have read permissions for
-bucket_name = 'pyspacer-test'  
-# Create a bucket object
-bucket = s3.Bucket(bucket_name)
+bucketname = 'pyspacer-test'
+
 try:
-    # List objects within the bucket
-    for obj in bucket.objects.all():
-        print(f'Object: {obj.key}')
-except botocore.exceptions.ClientError as e:
-    print(f'An error occurred: {e}')
-except botocore.exceptions.NoCredentialsError as e:
-    print("Credentials not available")
+    # Load the secret.json file
+    with open('secrets.json', 'r') as f:
+        secrets = json.load(f)
 
+    # Create a session using the credentials from secrets.json
+    s3_client = boto3.client(
+        's3',
+        region_name=secrets['AWS_REGION'],
+        aws_access_key_id=secrets['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=secrets['AWS_SECRET_ACCESS_KEY']
+    )
+except (ClientError, BotoCoreError) as e:
+    print(f"An AWS error occurred: {e}")
+except json.JSONDecodeError as e:
+    print(f"Error reading secrets.json: {e}")
+except IOError as e:
+    print(f"File error: {e}")
+except Exception as e:
+    print(f"An unexpected error occurred: {e}")
 ```
 
-## Runtimes.py 
-
-Using S3 as storage for images and features. 
-
-```{python}
-#
-image_loc = DataLocation(storage_type='s3',
-                         key='images-annotated/23_7168.JPG',
-                         bucketname=config.TEST_BUCKET)
-```
-
-```{python}
-nbr_rowcols = 10
-image_size = 1000
-org_img = load_image(image_loc)
-
-img = org_img.resize((image_size, image_size)).convert("RGB")
-
-img_loc = DataLocation(storage_type='memory',
-key='tmp/{}.jpg'.
-format(str(datetime.now()).replace(' ', '_')))
-```
-
-```{python}
-store_image(loc = img_loc, img = img)
-
-```
-```{python}
-feature_loc = DataLocation(storage_type='s3',
-                           key='features/23_7168.JPG.json',
-                           bucketname=config.TEST_BUCKET)
-```
-
-```{python}
-extractor = 'efficientnet_b0_ver1'
-JobMsg(
-        task_name='extract_features',
-        tasks = [ExtractFeaturesMsg(
-            job_token='regression_job',
-            extractor=extractor,
-            rowcols=[(i, i) for i in list(range(nbr_rowcols))],
-            image_loc=img_loc,
-            feature_loc=feature_loc
-        )])
-```
-
-```{python}
-job_msg = runtimes.make_job(nbr_rowcols = 10,image_size = 1000,image_key='images-annotated/23_7168.JPG', extractor = 'efficientnet_b0_ver1')
-```
-
-```{python}
-job_msg.tasks['extractor']
-```
-
-```{python}
-res = process_job(job_msg)
-```
-
-Print everything in config
-
-```{python}
-for key, value in config.__dict__.items():
-    if not key.startswith('__'):
-        print(key, value)
-```
+## Two ways to get the object keys
+- pro/con of paginator vs list_objects_v2 
+- list_objects_v2 may only contain 1000 objects
 
 
 ```{python}
-run = {
-    'extract_features': extract_features,
-    'train_classifier': train_classifier,
-    'classify_features': classify_features,
-    'classify_image': classify_image,
-}
-extractor = run['extract_features']
-results = []
-img = load_image(image_loc)
-rowcols = [(1000,1000)]
-with config.log_entry_and_exit('actual extraction'):
-    features, return_msg = extractor(img, rowcols)          
-
-
-
+def fetch_s3_data_to_parquet(s3_client, bucketname, parquet_filename, project=None):
+    """
+    Fetch a list recursively from S3 bucket. Save the list to a parquet file with columns:
+    - project: The name of the project.
+    - key: The key of the object.
+    - size: The size of the object.
+    Args:
+        s3_client: The boto3 S3 client.
+        bucketname (str): The name of the S3 bucket.
+        project (str): The name of the project.
+    Returns:
+        Parquet file with the list of objects in the S3 bucket.
+    """
+    paginator = s3_client.get_paginator('list_objects_v2')
+    # DataFrame to hold S3 objects data
+    data = []
+    def fetch_objects(page):
+        if 'Contents' in page:
+            for obj in page['Contents']:
+                key = obj['Key']
+                size = obj['Size']
+                data.append({'project': project, 'key': key, 'size': size})
+        if 'CommonPrefixes' in page:
+            for prefix in page['CommonPrefixes']:
+                subfolder = prefix['Prefix']
+                subfolder_page = s3_client.list_objects_v2(Bucket=bucketname, Prefix=subfolder)
+                fetch_objects(subfolder_page)
+    for page in paginator.paginate(Bucket=bucketname, Prefix=project, Delimiter='/'):
+        fetch_objects(page)
+    # Create a DataFrame from the data
+    df = pd.DataFrame(data)
+    # Save the DataFrame to a parquet file
+    df.to_parquet(parquet_filename, index=False)
+    return df
 ```
 
-
-## Additional troubleshooting 
+# All objects in bucket
 
 ```{python}
-nbr_rowcols = 10
-image_size = 1000
-image_key='images-annotated/23_7168.JPG'
-extractor = 'efficientnet_b0_ver1'
+x = s3.client.list_objects_v2(Bucket=bucketname)
+```
 
-org_img_loc = DataLocation(storage_type='s3',
-                               key=image_key,
-                               bucketname=config.TEST_BUCKET)
+```{python}
+# Get all the object keys in x
+object_keys = [obj['Key'] for obj in x['Contents']]
+```
+
+## Coralnet has slightly different structure
+- each prefix is a separate project
+- therefore for a single project we can use the prefix as a filter
+
+```{python}
+bucketname = 'coralnet-mermaid-share'
+project = 's1073'
+coral_net_project = s3_client.list_objects_v2(Bucket=bucketname)
+```
+
+## For multiple projects we need to filter the prefix
+
+```{python}
+list_of_projects = ['output', 'tmp']
+coral_net_projects = s3_client.list_objects_v2(Bucket=bucketname, Prefix = list_of_projects)
 
 ```
 
 ```{python}
-org_img = load_image(org_img_loc)
+# Save coral_net_projects to a parquet file
+# Unpack the dictionary in coral_net_project
+coral_net_project = coral_net_project['Contents']
+# Create a DataFrame from the data
+df = pd.DataFrame(coral_net_project)
+df.to_parquet('coral_net_projects.parquet', index=False)
 ```
 
 ```{python}
-img = org_img.resize((image_size, image_size)).convert("RGB")
-
-img_loc = DataLocation(storage_type='memory',
-                        key='tmp/{}.jpg'.
-                        format(str(datetime.now()).replace(' ', '_')))
-```
-
-
-```{python}
-from spacer.storage import storage_factory
-storage = storage_factory(img_loc.storage_type)
-```
-
-```{python}
-from io import BytesIO
-with BytesIO() as stream:
-    img.save(stream, format="JPEG")
-    stream.seek(0)
-    storage.store(img_loc, stream)
+# Find a given project in the saved data frame
+chosen_prj = df[df['Key'].str.contains('s1073')]
 ```
 
 ```{python}
 
-img_loc
+chosen_prj['Key'].str.split('/')
 ```
+
+```{python}
+# Split the key as a folder structure and group by the first folder
+chosen_prj['Key'].str.split('/').str[2].value_counts()
+```
+
+```{python}
+# Give the extensions of a given file in the project
+chosen_prj['Key'].str.split('/').str[-1].str.split('.').str[-1].value_counts()
+```
+
+```{python}
+# Seach chosen_proj for labelset.csv
+chosen_prj[chosen_prj['Key'].str.contains('annotations.csv')]
+```
+
+```{python}
+coral_net = fetch_s3_data_to_parquet(s3_client, bucketname, 'coralnet_shared.parquet', project= '')
+```
+
+```{python}
+# Search for .csv files in the coral_net data frame
+coral_net[coral_net['key'].str.contains('.csv')]
+```
+
+```{python}
+# Search for .json files in the coral_net data frame
+coral_net[coral_net['key'].str.contains('.json')]
+```
+
+```{python}
+# SSearch for project names in the coral_net data frame after /
+coral_net['key'].str.split('/').str[1].value_counts()
+```
+
+## Paginate 
+- Try paginate instead
+
+```{python}
+def paginate_s3_data_to_parquet(s3_client, bucketname, parquet_filename, project=None):
+    """
+    Fetch a list recursively from S3 bucket. Save the list to a parquet file with columns:
+    - project: The name of the project.
+    - key: The key of the object.
+    - size: The size of the object.
+    
+
+    Args:
+        s3_client: The boto3 S3 client.
+        bucketname (str): The name of the S3 bucket.
+        parquet_filename (str): The name of the parquet file.
+        project (str): The name of the project.
+
+
+    Returns:
+        Parquet file with the list of objects in the S3 bucket.
+    """
+    paginator = s3_client.get_paginator('list_objects_v2')
+    
+    # DataFrame to hold S3 objects data
+    data = []
+
+    for page in paginator.paginate(Bucket=bucketname, Prefix=project, Delimiter='/'):
+        # Fetch data
+        if 'Contents' in page:
+            for obj in page['Contents']:
+                key = obj['Key']
+                size = obj['Size']
+                data.append({'project': project, 'key': key, 'size': size})
+    # Create a DataFrame from the data
+    df = pd.DataFrame(data)
+    # Save the DataFrame to a parquet file
+    df.to_parquet(parquet_filename, index=False)
+    return df
+```
+
+```{python}
+paginator = s3_client.get_paginator('list_objects_v2')
+```
+
+```{python}
+data = []
+
+#Search for all objects in the bucket and save them as a dataframe
+for page in paginator.paginate(Bucket=bucketname, Prefix ='coralnet_public_features'):
+    print([c["Key"] for c in page["Contents"]])
+```
+
+```{python}
+```
+```{python}
+paginated_data = paginate_s3_data_to_parquet(s3_client, bucketname, 'paginated_data.parquet', project= '')
+```
+
+```{python}
+# Read parquet file
+paginated_data = pd.read_parquet('paginated_data.parquet')
+```
+
+
+## Read Annotations
+
+```{python}
+# Open annotations file at key: 'coralnet_public_features/s1073/annotations.json' and read first 5 rows
+annotations = s3_client.get_object(Bucket=bucketname, Key='coralnet_public_features/s1073/annotations.csv')
+
+# Read the annotations file as a pandas dataframe
+annotations = pd.read_csv(annotations['Body'])
+annotations.head()
+```
+
