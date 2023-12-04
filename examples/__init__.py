@@ -1,1 +1,0 @@
-from spacer import config
