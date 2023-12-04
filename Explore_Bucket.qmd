@@ -1,0 +1,122 @@
+---
+title: "Untitled"
+format: html
+---
+
+## Two ways to get the object keys
+- pro/con of paginator vs list_objects_v2 
+- list_objects_v2 may only contain 1000 objects
+
+
+```{python}
+def fetch_s3_data_to_parquet(s3_client, bucketname, parquet_filename, project=None):
+    """
+    Fetch a list recursively from S3 bucket. Save the list to a parquet file with columns:
+    - project: The name of the project.
+    - key: The key of the object.
+    - size: The size of the object.
+    Args:
+        s3_client: The boto3 S3 client.
+        bucketname (str): The name of the S3 bucket.
+        project (str): The name of the project.
+    Returns:
+        Parquet file with the list of objects in the S3 bucket.
+    """
+    paginator = s3_client.get_paginator('list_objects_v2')
+    # DataFrame to hold S3 objects data
+    data = []
+    def fetch_objects(page):
+        if 'Contents' in page:
+            for obj in page['Contents']:
+                key = obj['Key']
+                size = obj['Size']
+                data.append({'project': project, 'key': key, 'size': size})
+        if 'CommonPrefixes' in page:
+            for prefix in page['CommonPrefixes']:
+                subfolder = prefix['Prefix']
+                subfolder_page = s3_client.list_objects_v2(Bucket=bucketname, Prefix=subfolder)
+                fetch_objects(subfolder_page)
+    for page in paginator.paginate(Bucket=bucketname, Prefix=project, Delimiter='/'):
+        fetch_objects(page)
+    # Create a DataFrame from the data
+    df = pd.DataFrame(data)
+    # Save the DataFrame to a parquet file
+    df.to_parquet(parquet_filename, index=False)
+    return df
+```
+
+# All objects in bucket
+
+```{python}
+x = s3.client.list_objects_v2(Bucket=bucketname)
+```
+
+```{python}
+# Get all the object keys in x
+object_keys = [obj['Key'] for obj in x['Contents']]
+```
+
+
+## Paginate 
+- Try paginate instead
+
+```{python}
+def paginate_s3_data_to_parquet(s3_client, bucketname, parquet_filename, project=None):
+    """
+    Fetch a list recursively from S3 bucket. Save the list to a parquet file with columns:
+    - project: The name of the project.
+    - key: The key of the object.
+    - size: The size of the object.
+    
+
+    Args:
+        s3_client: The boto3 S3 client.
+        bucketname (str): The name of the S3 bucket.
+        parquet_filename (str): The name of the parquet file.
+        project (str): The name of the project.
+
+
+    Returns:
+        Parquet file with the list of objects in the S3 bucket.
+    """
+    paginator = s3_client.get_paginator('list_objects_v2')
+    
+    # DataFrame to hold S3 objects data
+    data = []
+
+    for page in paginator.paginate(Bucket=bucketname, Prefix=project, Delimiter='/'):
+        # Fetch data
+        if 'Contents' in page:
+            for obj in page['Contents']:
+                key = obj['Key']
+                size = obj['Size']
+                data.append({'project': project, 'key': key, 'size': size})
+    # Create a DataFrame from the data
+    df = pd.DataFrame(data)
+    # Save the DataFrame to a parquet file
+    df.to_parquet(parquet_filename, index=False)
+    return df
+```
+
+```{python}
+paginator = s3_client.get_paginator('list_objects_v2')
+```
+
+```{python}
+data = []
+
+#Search for all objects in the bucket and save them as a dataframe
+for page in paginator.paginate(Bucket=bucketname, Prefix ='coralnet_public_features'):
+    print([c["Key"] for c in page["Contents"]])
+```
+
+```{python}
+```
+```{python}
+paginated_data = paginate_s3_data_to_parquet(s3_client, bucketname, 'paginated_data.parquet', project= '')
+```
+
+```{python}
+# Read parquet file
+paginated_data = pd.read_parquet('paginated_data.parquet')
+```

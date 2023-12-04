@@ -1,0 +1,436 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{python}
+"""
+This script extracts features from images, trains a classifier, and stores the classifier in a file.
+It uses AWS S3 to store the images and features.
+The script loads the annotations for the images from a JSON file and the labelset from a CSV file.
+It then extracts features from the images using an EfficientNetExtractor and stores them in S3.
+Finally, it trains a classifier using the extracted features and stores it in a file.
+"""
+import csv
+import json
+import logging
+import traceback
+from operator import itemgetter
+import os
+from datetime import datetime
+from botocore.exceptions import NoCredentialsError, ClientError
+from pathlib import Path
+from spacer import config
+from spacer.data_classes import ImageLabels
+from scripts.docker import runtimes
+from spacer.tasks import process_job, classify_image, extract_features, train_classifier, classify_features
+from spacer.storage import load_image, store_image
+from spacer.messages import JobMsg, DataLocation, ExtractFeaturesMsg
+from spacer.extract_features import EfficientNetExtractor
+from spacer.messages import (
+    DataLocation,
+    ExtractFeaturesMsg, 
+    ExtractFeaturesReturnMsg, 
+    TrainClassifierMsg, 
+    TrainClassifierReturnMsg, 
+    ClassifyFeaturesMsg, 
+    ClassifyImageMsg, 
+    ClassifyReturnMsg, JobMsg, JobReturnMsg
+)
+
+from spacer.tasks import classify_features, extract_features, train_classifier
+
+# Load the secret.json file
+with open('secrets.json', 'r') as f:
+    secrets = json.load(f)
+
+```
+
+# Query coralnet
+
+
+- for a given folder/project name 
+- get the object keys needed for for jobmsg and to train the classifier
+- get the labelset for the project
+- get the annotations for the project
+- get the images for the project
+- get the featuresvectors for the project
+
+## Get the object keys needed for for jobmsg and to train the classifier
+
+```{python}
+import json
+import boto3
+from botocore.exceptions import ClientError, BotoCoreError
+import os
+import pickle
+import pandas as pd
+from datetime import datetime, timedelta
+
+
+try:
+    # Load the secret.json file
+    with open('secrets.json', 'r') as f:
+        secrets = json.load(f)
+
+    # Create a session using the credentials from secrets.json
+    s3_client = boto3.client(
+        's3',
+        region_name=secrets['AWS_REGION'],
+        aws_access_key_id=secrets['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=secrets['AWS_SECRET_ACCESS_KEY']
+    )
+except (ClientError, BotoCoreError) as e:
+    print(f"An AWS error occurred: {e}")
+except json.JSONDecodeError as e:
+    print(f"Error reading secrets.json: {e}")
+except IOError as e:
+    print(f"File error: {e}")
+except Exception as e:
+    print(f"An unexpected error occurred: {e}")
+```
+
+
+
+## Coralnet 
+
+## Read in the cached dataframe
+
+```{python}
+df= pd.read_parquet('coral_net_projects.parquet')
+
+```
+
+For a given project, search the cache for it: 
+
+```{python}
+# Find a given project in the saved data frame
+project_name = 's1073'
+chosen_prj = df[df['Key'].str.contains(project_name)]
+```
+
+```{python}
+
+chosen_prj['Key'].str.split('/')
+```
+
+```{python}
+# Split the key as a folder structure and group by the first folder
+chosen_prj['Key'].str.split('/').str[2].value_counts()
+```
+
+## Search for file extensions
+
+```{python}
+# Give the extensions of a given file in the project
+chosen_prj['Key'].str.split('/').str[-1].str.split('.').str[-1].value_counts()
+```
+
+## Search for annotations.csv
+
+```{python}
+# Seach chosen_proj for annotations.csv and get the key
+annotation_key = chosen_prj[chosen_prj['Key'].str.contains('annotations.csv')]['Key'].iloc[0]
+
+```
+
+## Use spacer to create train classifier msg
+
+- We have features for a given project as .featurevector files
+- We have annotations for a given project as .csv files
+- We are missing the labelset for a given project as .csv files
+- We are missing the images for a given project as .jpg files
+
+## Load annotations for a given source
+
+```{python}
+# Use s3_client to list 2 objects in the bucket
+bucketname='coralnet-mermaid-share'
+
+```
+
+```{python}
+# Open annotations file at key: 'coralnet_public_features/s1073/annotations.cv' and read first 5 rows
+
+annotations = s3_client.get_object(Bucket=bucketname, Key=annotation_key)
+# Read the annotations file as a pandas dataframe
+annotations = pd.read_csv(annotations['Body'])
+```
+
+- add in source id to annotations
+
+```{python}
+# Add in source id to annotations as the project_name string
+
+annotations['Source ID'] = project_name
+
+```
+
+```{python}
+feature_ids = ['843923', '843924', '843925','858840']
+pattern = '|'.join(feature_ids)
+chosen_prj[chosen_prj['Key'].str.contains(pattern)]
+```
+
+- Why this ratio? 
+- Is this correct? 
+
+```{python}
+# Construct Image ID field to include the directories we need to access in S3
+# E.g. 'coralnet_public_features/{project_name}/features/{image_id}' 
+annotations['Image ID'] = 'coralnet_public_features/' + project_name + '/features/' + 'i' + annotations['Image ID'].astype(str) + '.featurevector'
+```
+
+```{python}
+
+
+
+```
+
+# Get the first 16 annotated annotations for training from chosen_prj df
+
+```{python}
+# CoralNet uses a 7-to-1 ratio of train_labels to val_labels.
+# Calculate the split index
+total_labels = len(annotations)
+train_size = int(total_labels * 7 / 8)  # 7 parts for training out of 8 total parts
+
+# Split the data
+train_labels_data = annotations.iloc[:train_size]
+val_labels_data = annotations.iloc[train_size:]
+
+```
+
+Sort?
+Convert to dict ?
+```{python}
+# Convert train_labels_data and val_labels_data to the required format
+train_labels_data = {f"{image_id}": [tuple(x) for x in group[['Row', 'Column', 'Label ID']].values]
+                     for image_id, group in train_labels_data.groupby('Image ID')}
+val_labels_data = {f"{image_id}": [tuple(x) for x in group[['Row', 'Column', 'Label ID']].values]
+                   for image_id, group in val_labels_data.groupby('Image ID')}
+
+```
+
+```{python}
+output_dir = Path.cwd() / 'output'
+classifier_filepath = output_dir /'classifier1.pkl'
+valresult_filepath = output_dir / 'valresult.json'
+
+```
+TODO
+```{python}
+# Create a train classifier message
+
+train_msg = TrainClassifierMsg(
+    job_token='mulitest',
+    trainer_name='minibatch',
+    nbr_epochs=10,
+    clf_type='MLP',
+    # A subset
+    train_labels=ImageLabels(data = train_labels_data),
+    val_labels=ImageLabels(data = val_labels_data),
+    #S3 bucketname
+    features_loc=DataLocation('s3', bucketname = bucketname, key=''),
+    previous_model_locs=[],
+    model_loc=DataLocation('filesystem',str(Path.cwd())+'/classifier_test.pkl'),
+    valresult_loc=DataLocation('filesystem',str(Path.cwd())+'/valresult_test.json'),
+
+)
+```
+
+```{python}
+return_msg = train_classifier(train_msg)
+
+```
+
+```{python}
+classifier_filepath = Path.cwd() /'classifier_test.pkl'
+valresult_filepath = Path.cwd()  / 'valresult_test.json'
+```
+```{python}
+ref_accs_str = ", ".join([f"{100*acc:.1f}" for acc in return_msg.ref_accs])
+
+print("------------------------------")
+print(f"Classifier stored at: {classifier_filepath}")
+print(f"New model's accuracy: {100*return_msg.acc:.1f}%")
+print(
+    "New model's accuracy progression (calculated on part of train_labels)"
+    f" after each epoch of training: {ref_accs_str}")
+
+print(f"Evaluation results:")
+with open(valresult_filepath) as f:
+    valresult = json.load(f)
+```
+
+## Create matching labels between coralnet and mermaid
+
+```{python}
+label_shortcode = pd.read_csv('coral_net_mermaid_labels.csv')
+
+# Rename ID to class and Default shord code to shortcode
+label_shortcode = label_shortcode.rename(columns={'ID': 'classes', 'Default short code': 'shortcode'})
+
+# Get the unique class and shortcode pairs
+label_shortcode = label_shortcode[['classes', 'shortcode']].drop_duplicates()
+
+```
+
+```{python}
+# Convert label_shortcode DataFrame to a dictionary
+# Create label_list
+# Account for those that don't match with a default shortcode
+label_list = [label_ids_to_shortcodes.get(label_id, 'Unknown') for label_id in valresult['classes']]
+
+```
+
+```{python}
+for ground_truth_i, prediction_i, score in zip(
+    valresult['gt'], valresult['est'], valresult['scores']
+):
+    print(f"Actual = {label_list[ground_truth_i]}, Predicted = {label_list[prediction_i]}, Confidence = {100*score:.1f}%")
+
+print(f"Train time: {return_msg.runtime:.1f} s")
+
+```
+
+```{python}
+    # Classify
+
+for image_filepath in unannotated_image_filepaths:
+    feature_filepath = image_to_feature_filepath(image_filepath)
+
+    message = ClassifyFeaturesMsg(
+        job_token=image_filepath.name,
+        feature_loc=DataLocation('filesystem', feature_filepath),
+        classifier_loc=DataLocation('filesystem', classifier_filepath),
+    )
+    return_msg = classify_features(message)
+
+    print("------------------------------")
+    print(f"Classification result for {image_filepath.name}:")
+
+    label_ids = return_msg.classes
+    for i, (row, col, scores) in enumerate(return_msg.scores):
+        top_scores = sorted(
+            zip(label_ids, scores), key=itemgetter(1), reverse=True)
+        top_scores_str = ", ".join([
+            f"{label_ids_to_codes[str(label_id)]} = {100*score:.1f}%"
+            for label_id, score in top_scores[:TOP_SCORES_PER_POINT]
+        ])
+        print(f"- Row {row}, column {col}: {top_scores_str}")
+
+    print(f"Classification time: {return_msg.runtime:.1f} s")
+
+print("------------------------------")
+print("Clear the output dir before rerunning this script.")
+```
+
+```{python}
+# From chosen_prj, get the features for the source from the features directory from the full Key path
+# E.g. coralnet_public_features/s1073/features/i84392.featurevector
+# Use Regex to get the features
+feature_files = chosen_prj[chosen_prj['Key'].str.contains(r'coralnet_public_features/.*/features/.*\.featurevector$')]
+
+
+```
+
+## For each feature file, create a classify features message
+
+```{python}
+#for key in feature_files['Key']:
+
+```
+
+## Classify one image
+```{python}
+# Get first row and column of feature_files
+token_name = feature_files['Key'].iloc[0]
+```
+
+
+```{python}
+    message = ClassifyFeaturesMsg(
+        job_token=token_name,
+        feature_loc=DataLocation('s3', key=token_name, bucketname = 'coralnet-mermaid-share'),
+        classifier_loc=DataLocation('filesystem', classifier_filepath),
+    )
+```
+
+```{python}
+return_message = classify_features(message)
+```
+
+## Classify all images in source
+
+```{python}
+# Create a list of classify features messages
+# For each feature file, create a classify features message
+messages = []
+for key in feature_files['Key']:
+    message = ClassifyFeaturesMsg(
+        job_token=key,
+        feature_loc=DataLocation('s3', key=key, bucketname = 'coralnet-mermaid-share'),
+        classifier_loc=DataLocation('filesystem', classifier_filepath),
+    )
+    messages.append(message)
+```
+
+```{python}
+```
+## Use boto3 to get the features from S3
+
+
+```{python}
+import boto3
+import re
+
+s3 = boto3.resource('s3')
+bucket = s3.Bucket('your_bucket_name')
+
+feature_files = []
+for obj in bucket.objects.filter(Prefix='coralnet_public_features/{}/features/'.format(chosen_prj)):
+    if re.search(r'\.featurevector$', obj.key):
+        feature_files.append(obj.key)
+
+print(feature_files)
+```
+
+
+```{python}
+coral_net = fetch_s3_data_to_parquet(s3_client, bucketname, 'coralnet_shared.parquet', project= '')
+```
+
+```{python}
+# Search for .csv files in the coral_net data frame
+coral_net[coral_net['key'].str.contains('.csv')]
+```
+
+```{python}
+# Search for .json files in the coral_net data frame
+coral_net[coral_net['key'].str.contains('.json')]
+```
+
+```{python}
+# SSearch for project names in the coral_net data frame after /
+coral_net['key'].str.split('/').str[1].value_counts()
+```
+
+## Read Annotations
+
+```{python}
+# Open annotations file at key: 'coralnet_public_features/s1073/annotations.json' and read first 5 rows
+bucketname='coralnet_public_features'
+annotations = s3_client.get_object(Bucket=bucketname, Key='coralnet_public_features/s1073/annotations.csv')
+
+# Read the annotations file as a pandas dataframe
+annotations = pd.read_csv(annotations['Body'])
+annotations.head()
+```
+
+```{python}
+my_data = fetch_s3_data_to_parquet(s3_client, bucketname, 's3_data2.parquet', project = '')
+```
+
+## Classify Task
