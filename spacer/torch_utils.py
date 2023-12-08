@@ -36,9 +36,13 @@ def load_weights(model: Any,
     :param weights_datastream: model weights, already loaded from storage
     :return: well trained model
     """
+    # Use GPU if available
+    #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device('cpu')
+    model = model.to(device)
     # Load weights
     state_dicts = torch.load(weights_datastream,
-                             map_location=torch.device('cpu'))
+                             map_location=device)
 
     with config.log_entry_and_exit('model initialization'):
         new_state_dicts = OrderedDict()
@@ -68,7 +72,9 @@ def extract_feature(patch_list: List,
     net.eval()
 
     transformer = transformation()
-
+     # Define the device
+    #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
     # Feed forward and extract features
     bs = pyparams['batch_size']
     num_batch = int(np.ceil(len(patch_list) / bs))
@@ -76,6 +82,7 @@ def extract_feature(patch_list: List,
     with config.log_entry_and_exit('forward pass through net'):
         for b in range(num_batch):
             batch = patch_list[b*bs: b*bs + min(len(patch_list[b*bs:]), bs)]
+            # TODO send batch to GPU ?
             batch = torch.stack([transformer(i) for i in batch])
             with torch.no_grad():
                 features = net.extract_features(batch)
