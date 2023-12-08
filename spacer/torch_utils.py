@@ -37,8 +37,7 @@ def load_weights(model: Any,
     :return: well trained model
     """
     # Use GPU if available
-    #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    device = torch.device('cpu')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     # Load weights
     state_dicts = torch.load(weights_datastream,
@@ -73,8 +72,7 @@ def extract_feature(patch_list: List,
 
     transformer = transformation()
      # Define the device
-    #device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    device = torch.device('cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # Feed forward and extract features
     bs = pyparams['batch_size']
     num_batch = int(np.ceil(len(patch_list) / bs))
