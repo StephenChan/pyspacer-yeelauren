@@ -145,3 +145,5 @@ images-annotated/
 images-unannotated/
 tmp/
 output/
+
+*.parquet
