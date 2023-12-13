@@ -92,8 +92,6 @@ conn.execute("CREATE TABLE duckdb_df AS SELECT * FROM df")
 logger.info('Wranging in DuckDB based on sources_to_keep')
 # Create the feature vector parsing in duckdb
 # Add a new column 'key' to the table
-conn.execute("ALTER TABLE duckdb_df ADD COLUMN key VARCHAR")
-
 
 # Update the 'key' column with the desired values
 conn.execute(
