@@ -1,9 +1,9 @@
 name: torch-duck-dev  # Replace with your desired environment name
 channels:
   - pytorch
-  - nvidia
   - defaults
 dependencies:
+  - python=3.10
   - pandas
   - numpy
   - dask
