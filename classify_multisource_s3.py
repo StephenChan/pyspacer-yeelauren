@@ -5,7 +5,7 @@ Train and classify from multisource (or project) using featurevector files provi
 import json
 import os
 import pickle
-
+import s3fs
 import boto3
 import duckdb
 import pandas as pd
@@ -25,36 +25,30 @@ from spacer.tasks import (
 
 load_dotenv()
 # Set up connections
-try:
-    # Create a session using the credentials from dotenv
-    s3_client = boto3.client(
-        "s3",
-        region_name=os.environ["S3_REGION"],
-        aws_access_key_id=os.environ["S3_ACCESS_KEY"],
-        aws_secret_access_key=os.environ["S3_SECRET_KEY"],
-    )
-except (ClientError, BotoCoreError) as e:
-    print(f"An AWS error occurred: {e}")
-except json.JSONDecodeError as e:
-    print(f"Error reading secrets.json: {e}")
-except IOError as e:
-    print(f"File error: {e}")
-except Exception as e:
-    print(f"An unexpected error occurred: {e}")
-
 # Set up Sources
 bucketname = "coralnet-mermaid-share"
 prefix = "coralnet_public_features/"
-sources_to_keep = pd.read_csv("list_of_sources.csv")
 
-# Sources using s3fs
-
+# Use Pandas and s3fs to read the csv from s3
+s3 = s3fs.S3FileSystem(
+    anon=False,
+    use_ssl=True,
+    client_kwargs={
+        "region_name": os.environ['S3_REGION'],
+        "endpoint_url": os.environ['S3_ENDPOINT'],
+        "aws_access_key_id": os.environ['S3_ACCESS_KEY'],
+        "aws_secret_access_key": os.environ['S3_SECRET_KEY'],
+        "verify": True,
+    }
+)
 # Use pyarrow to read the parquet file from S3
 fs = fs.S3FileSystem(
     region=os.environ["S3_REGION"],
     access_key=os.environ["S3_ACCESS_KEY"],
     secret_key=os.environ["S3_SECRET_KEY"],
 )
+
+sources_to_keep = pd.read_csv(s3.open('allsource/list_of_sources.csv', mode='rb'))
 # TODO check this is the most efficient way to load in parquet
 # Load Parquet file from S3 bucket using s3_client
 parquet_file = "pyspacer-test/allsource/CoralNet_Annotations_SourceID.parquet"
@@ -139,12 +133,14 @@ return_msg = train_classifier(train_msg)
 
 print(f"Train time: {return_msg.runtime:.1f} s")
 
+path = 's3://pyspacer-test/allsource/return_msg_all_source.pkl'
+
+# Use pickle to serialize the object
 return_msg_bytes = pickle.dumps(return_msg)
-s3_client.put_object(
-    Bucket="pyspacer-test",
-    Key="allsource" + "/return_msg_all_source.pkl",
-    Body=return_msg_bytes,
-)
+
+# Use s3fs to write the bytes to the file
+with s3.open(path, 'wb') as f:
+    f.write(return_msg_bytes)
 
 ref_accs_str = ", ".join([f"{100*acc:.1f}" for acc in return_msg.ref_accs])
 
