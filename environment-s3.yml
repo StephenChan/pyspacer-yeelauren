@@ -1,0 +1,21 @@
+name: torch-duck-dev  # Replace with your desired environment name
+channels:
+  - pytorch
+  - nvidia
+  - defaults
+dependencies:
+  - pandas
+  - numpy
+  - dask
+  - duckdb
+  - ipympl
+  - ipykernel
+  - pytorch
+  - pyarrow
+  - boto3
+  - duckdb-engine
+  - jupysql
+  - jupyterlab
+  - s3fs
+  - python-dotenv
+  - pip
