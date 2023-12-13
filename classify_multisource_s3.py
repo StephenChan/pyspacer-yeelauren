@@ -67,17 +67,11 @@ conn.execute("ALTER TABLE duckdb_df ADD COLUMN key VARCHAR")
 
 # Update the 'key' column with the desired values
 conn.execute(
-    """
-    UPDATE duckdb_df 
-    SET key = 'coralnet_public_features/' || CAST(source_id AS VARCHAR) || '/features/i' || CAST("Image ID" AS VARCHAR) || '.featurevector'
-    """
-)
-
-# Now you can use the updated duckdb_df in your queries
-conn.execute(
     f"""
     CREATE TABLE selected_sources AS 
-    SELECT * FROM duckdb_df WHERE "source_id" IN {tuple(sources_to_keep["source_id"].tolist())}
+    SELECT *, 'coralnet_public_features/' || CAST(source_id AS VARCHAR) || '/features/i' || CAST("Image ID" AS VARCHAR) || '.featurevector' AS key
+    FROM duckdb_df 
+    WHERE "source_id" IN {tuple(sources_to_keep["source_id"].tolist())}
     """
 )
 
