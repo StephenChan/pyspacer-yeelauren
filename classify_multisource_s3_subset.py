@@ -87,12 +87,9 @@ conn = duckdb.connect()
 # Create a DuckDB table
 logger.info('Creating DuckDB table')
 conn.execute("CREATE TABLE duckdb_df AS SELECT * FROM df")
-# Since we have this in duckdb let's restructure some of the training code in hopes that it also benefits from significant speedups in pre-processing.
-
 logger.info('Wranging in DuckDB based on sources_to_keep')
 # Create the feature vector parsing in duckdb
 # Add a new column 'key' to the table
-
 # Update the 'key' column with the desired values
 conn.execute(
     f"""
