@@ -11,6 +11,7 @@ import duckdb
 import logging 
 import psutil
 import threading
+from datetime import datetime
 import pandas as pd
 import pyarrow.parquet as pq
 from botocore.exceptions import BotoCoreError, ClientError
