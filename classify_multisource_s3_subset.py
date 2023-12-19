@@ -26,6 +26,7 @@ from spacer.messages import (
 from spacer.tasks import (
     train_classifier,
 )
+from spacer.task_utils import preprocess_labels
 
 load_dotenv()
 # Set up logging 
@@ -105,33 +106,14 @@ log_memory_usage('Memory usage after wrangling in DuckDB')
 # Training based on CoralNet's ratio
 # TODO: This is a good place to start, but we should also consider the ratio of images per label.
 
-logger.info('Split Training/ Val based on CoralNet\'s ratio')
-total_labels = len(selected_sources)
-train_size = int(total_labels * 7 / 8)
-
-logger.info('Create train_labels_data and val_labels_data')
-# Use duckdb to create train_labels_data and val_labels_data
-train_labels_data = conn.execute(
-    f"SELECT * FROM selected_sources LIMIT {train_size}"
-).fetchdf()
-
-val_labels_data = conn.execute(
-    f"SELECT * FROM selected_sources OFFSET {train_size} ROWS"
-).fetchdf()
-
-logger.info('Restructure as Tuples for ImageLabels')
 
 # Rewrite
-train_labels_data = {
+labels_data = {
     f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
-    for key, group in train_labels_data.groupby("key")
+    for key, group in selected_sources.groupby("key")
 }
 
 
-val_labels_data = {
-    f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
-    for key, group in val_labels_data.groupby("key")
-}
 log_memory_usage('Memory usage after creating train_labels_data and val_labels_data')
 logger.info('Create TrainClassifierMsg')
 
@@ -141,16 +123,14 @@ train_msg = TrainClassifierMsg(
     nbr_epochs=1,
     clf_type="MLP",
     # A subset
-    train_labels=ImageLabels(data=train_labels_data),
-    val_labels=ImageLabels(data=val_labels_data),
-    # S3 bucketname
-    features_loc=DataLocation("s3", bucketname=bucketname, key=""),
+    labels=ImageLabels(labels_data),
+    features_loc=DataLocation("s3", bucket_name=bucketname, key=""),
     previous_model_locs=[],
     model_loc=DataLocation(
-        "s3", bucketname="pyspacer-test", key="allsource" + f"/classifier_all_source_{current_time}.pkl"
+        "s3", bucket_name="pyspacer-test", key="allsource" + f"/classifier_all_source_{current_time}.pkl"
     ),
     valresult_loc=DataLocation(
-        "s3", bucketname="pyspacer-test", key="allsource" + f"/valresult_all_source_{current_time}.json"
+        "s3", bucket_name="pyspacer-test", key="allsource" + f"/valresult_all_source_{current_time}.json"
     ),
 )
 
