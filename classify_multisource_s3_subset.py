@@ -124,7 +124,7 @@ train_msg = TrainClassifierMsg(
     clf_type="MLP",
     # A subset
     labels=ImageLabels(labels_data),
-    features_loc=DataLocation("s3", bucket_name=bucketname, key=""),
+    features_loc=DataLocation("s3", bucket_name="pyspacer-test", key=""),
     previous_model_locs=[],
     model_loc=DataLocation(
         "s3", bucket_name="pyspacer-test", key="allsource" + f"/classifier_all_source_{current_time}.pkl"
