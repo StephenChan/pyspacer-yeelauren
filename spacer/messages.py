@@ -22,7 +22,7 @@ class DataLocation(DataClass):
     def __init__(self,
                  storage_type: str,
                  key: str,
-                 bucket_name: str | None = None):
+                 bucketname: str | None = None):
 
         assert storage_type in config.STORAGE_TYPES, "Storage type not valid."
         if storage_type == 's3':
