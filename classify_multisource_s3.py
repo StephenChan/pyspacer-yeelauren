@@ -99,32 +99,44 @@ selected_sources = conn.execute("SELECT * FROM selected_sources").fetchdf()
 log_memory_usage('Memory usage after wrangling in DuckDB')
 # Training based on CoralNet's ratio
 # TODO: This is a good place to start, but we should also consider the ratio of images per label.
-logger.info('Split Training/ Val based on CoralNet\'s ratio')
-total_labels = len(selected_sources)
-train_size = int(total_labels * 7 / 8)
+# logger.info('Split Training/ Val based on CoralNet\'s ratio')
+# total_labels = len(selected_sources)
+# train_size = int(total_labels * 7 / 8)
 
-logger.info('Create train_labels_data and val_labels_data')
-# Use duckdb to create train_labels_data and val_labels_data
-train_labels_data = conn.execute(
-    f"SELECT * FROM selected_sources LIMIT {train_size}"
-).fetchdf()
+# logger.info('Create train_labels_data and val_labels_data')
+# # Use duckdb to create train_labels_data and val_labels_data
+# train_labels_data = conn.execute(
+#     f"SELECT * FROM selected_sources LIMIT {train_size}"
+# ).fetchdf()
 
-val_labels_data = conn.execute(
-    f"SELECT * FROM selected_sources OFFSET {train_size} ROWS"
-).fetchdf()
+# val_labels_data = conn.execute(
+#     f"SELECT * FROM selected_sources OFFSET {train_size} ROWS"
+# ).fetchdf()
 
 logger.info('Restructure as Tuples for ImageLabels')
 
 # Rewrite
-train_labels_data = {
-    f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
-    for key, group in train_labels_data.groupby("key")
-}
+# train_labels_data = {
+#     f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
+#     for key, group in train_labels_data.groupby("key")
+# }
 
 
-val_labels_data = {
+# val_labels_data = {
+#     f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
+#     for key, group in val_labels_data.groupby("key")
+# }
+
+# log_memory_usage('Memory usage after creating train_labels_data and val_labels_data')
+# logger.info('Create TrainClassifierMsg')
+
+# labels_data = {
+#     f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
+#     for key, group in selected_sources.groupby("key")
+# }
+labels_data = {
     f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
-    for key, group in val_labels_data.groupby("key")
+    for key, group in selected_sources.groupby("key")
 }
 
 log_memory_usage('Memory usage after creating train_labels_data and val_labels_data')
@@ -136,9 +148,7 @@ train_msg = TrainClassifierMsg(
     nbr_epochs=1,
     clf_type="MLP",
     # A subset
-    train_labels=ImageLabels(data=train_labels_data),
-    val_labels=ImageLabels(data=val_labels_data),
-    # S3 bucketname
+    labels=ImageLabels(labels_data),
     features_loc=DataLocation("s3", bucketname=bucketname, key=""),
     previous_model_locs=[],
     model_loc=DataLocation(
@@ -150,7 +160,7 @@ train_msg = TrainClassifierMsg(
 )
 logger.info('Train Classifier')
 log_memory_usage('Memory usage before training')
-
+print('Training Classifier')
 return_msg = train_classifier(train_msg)
 
 logger.info(f'Train time: {return_msg.runtime:.1f} s')
