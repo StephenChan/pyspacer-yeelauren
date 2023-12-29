@@ -1,4 +1,4 @@
-name: torch-duck-dev  # Replace with your desired environment name
+name: delete-me # Replace with your desired environment name
 channels:
   - pytorch
   - defaults

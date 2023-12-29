@@ -70,6 +70,7 @@ fs = fs.S3FileSystem(
 )
 
 #sources_to_keep = pd.read_csv(s3.open('allsource/list_of_sources.csv', mode='rb'))
+# Construct the sources into a df to feed into existing code 
 sources_to_keep = pd.DataFrame(
     {
         "source_id": ['s1970', 's2083', 's2170']

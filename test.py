@@ -1,66 +1,30 @@
----
-title: "Classify from multisource from Coralnet S3"
-format: html
----
 
-```{python}
 """
 Train and classify from multisource (or project) using featurevector files provided on S3.
 
 """
 import json
 import boto3
-from botocore.exceptions import ClientError, BotoCoreError, NoCredentialsError
-import os
+from botocore.exceptions import ClientError, BotoCoreError
 import pickle
 import pandas as pd
-from datetime import datetime, timedelta
 import io
-import csv
-import logging
-import traceback
 from operator import itemgetter
 from pathlib import Path
 from spacer import config
 from spacer.data_classes import ImageLabels
-from scripts.docker import runtimes
 from spacer.tasks import (
-    process_job,
-    classify_image,
-    extract_features,
     train_classifier,
     classify_features,
 )
-from spacer.storage import load_image, store_image
-from spacer.extract_features import EfficientNetExtractor
 from spacer.messages import (
     DataLocation,
-    ExtractFeaturesMsg,
-    ExtractFeaturesReturnMsg,
     TrainClassifierMsg,
-    TrainClassifierReturnMsg,
     ClassifyFeaturesMsg,
-    ClassifyImageMsg,
-    ClassifyReturnMsg,
-    JobMsg,
-    JobReturnMsg,
 )
-
 from spacer.tasks import classify_features, extract_features, train_classifier
 
-```
-
-```{python}
-# Load the pickle file and read it
-with open('return_msg_all_source_2023-12-19_19-50-46.pkl', 'rb') as f:
-    classifier = pickle.load(f)
-```
-
-```{python}
-```
 ## Assign the secrets to boto3
-
-```{python}
 
 try:
     # Load the secret.json file
@@ -82,76 +46,34 @@ except IOError as e:
     print(f"File error: {e}")
 except Exception as e:
     print(f"An unexpected error occurred: {e}")
-```
+
 
 ## Coralnet
 
-Let's use three sources that are smaller in size for mvp and store them in a list called `sources`:
-
-```         
-- `s1970`
-- `s2083`
-- `s2170`
-```
-
-```{python}
 sources = ['s1970', 's2083', 's2170']
-```
 
+## Find the annotations.csv files for the chosen sources
 
-
-
-
-# Find the annotations.csv files for the chosen sources
-
--   Create the key value from the source
-
-```{python}
 # Create a list for the chosen sources for the annotations f'coralnet_public_features/{source}/annotations.csv'
 chosen_sources = []
 for source in sources:
     chosen_sources.append(f'coralnet_public_features/{source}/annotations.csv')
-```
 
-Use S3 to download the annotations.csv files for the chosen sources - check if they exist in the bucket first
 
-- Using the folders we created previously
+#Use S3 to download the annotations.csv files for the chosen sources - check if they exist in the bucket first
 
-```{python}
-folders = pd.read_csv('folders.csv')
-folders['chosen_sources'] = folders['source_folder'].apply(lambda x: f'{x}annotations.csv')
-```
-
-```{python}
-chosen_sources = folders['chosen_sources'].tolist()
-```
-
-```{python}
-```
-
-```{python}
 # See if chosen_sources are in the s3 bucket using s3_client
-missing_sources = []
 bucketname='coralnet-mermaid-share'
 for source in chosen_sources:
     try:
         s3_client.head_object(Bucket=bucketname, Key=source)
         print(f"{source} exists in the bucket.")
     except Exception as e:
-        missing_sources.append(source)
         print(f"{source} does not exist in the bucket. Error: {e}")
-```
 
-```{python}
-missing_sources.__len__()
-```
+
 ## Append annotations
 
--   The following code will append the annotations.csv files for the chosen sources into one dataframe called `appended_df` in chunks that you can specify. In the future for larger sources we may need to consider memory efficient ways of combining the annotations.csv files.
-
-Using pandas only option for now. Other options include: - dask - sqllite - pyarrow/parquet
-
-```{python}
 
 def read_csv_in_chunks(bucketname, key, chunksize=10000):
     """
@@ -178,11 +100,6 @@ def read_csv_in_chunks(bucketname, key, chunksize=10000):
         yield chunk
 
 
-```
-
-Append each key in chosen_sources to the appended_df dataframe for each source.
-
-```{python}
 appended_df = pd.DataFrame()
 
 for key in chosen_sources:
@@ -196,9 +113,9 @@ for key in chosen_sources:
                         raise ValueError(f"Inconsistent data structure in file: {key}")
                 first_chunk = False
             appended_df = pd.concat([appended_df, chunk], ignore_index=True)
-```
 
-```{python}
+
+
 # Create a key to download the features from S3 given:
 # 'coralnet_public_features/{source_id}/features/i{image_id}'
 # E.g. 'coralnet_public_features/s1073/features/i84392.featurevector'
@@ -214,29 +131,17 @@ def format_featurevector_key(image_id, source_id):
     source_id = source_id.split('/')[1]  # Get the source_id from the source_id column
     image_id = 'i' + str(image_id) + '.featurevector'  # Format the image_id
     return 'coralnet_public_features/' + source_id + '/features/' + image_id
-```
 
-Apply the format_featurevector_key function to the appended_df dataframe to create a new column called key.
 
-```{python}
+#Apply the format_featurevector_key function to the appended_df dataframe to create a new column called key.
+
+
 # Format new column in appended_df called key
 appended_df['key'] = appended_df.apply(lambda x: format_featurevector_key(x['Image ID'], x['source_id']), axis=1)
-```
-
-```{python}
-# Save appended_df to parquet file
-
-appended_df.to_parquet('appended_df_p.parquet',  partition_cols=["Label ID"])
-```
 
 
 ## Training Data
 
--   This is a basic implementation on how to split the train and val labels by a 7:1 ratio. However, we may want to consider other ways of splitting the data in the future.
-
-
-```{python}
-%time
 # CoralNet uses a 7-to-1 ratio of train_labels to val_labels.
 # Calculate the split index
 total_labels = len(appended_df)
@@ -246,29 +151,23 @@ train_size = int(total_labels * 7 / 8)  # 7 parts for training out of 8 total pa
 train_labels_data = appended_df.iloc[:train_size]
 val_labels_data = appended_df.iloc[train_size:]
 
-```
 
--   To work with the `ImageLabels` class, we need to convert the train_labels_data and val_labels_data to the required format which is represented as a dictionary of lists of tuples. The dictionary keys are the image keys, and the values are lists of tuples of the form (row, column, label_id).
-
-```{python}
 # Convert train_labels_data and val_labels_data to the required format
 train_labels_data = {f"{key}": [tuple(x) for x in group[['Row', 'Column', 'Label ID']].values]
                      for key, group in train_labels_data.groupby('key')}
-train_labels_data
-```
 
-```{python}
+
 val_labels_data = {f"{key}": [tuple(x) for x in group[['Row', 'Column', 'Label ID']].values]
                    for key, group in val_labels_data.groupby('key')}
-```
+
 
 ## Use spacer to create train classifier msg
 
-```{python}
+
 train_msg = TrainClassifierMsg(
     job_token='mulitest',
     trainer_name='minibatch',
-    nbr_epochs=1,
+    nbr_epochs=10,
     clf_type='MLP',
     # A subset
     train_labels=ImageLabels(data = train_labels_data),
@@ -276,32 +175,27 @@ train_msg = TrainClassifierMsg(
     #S3 bucketname
     features_loc=DataLocation('s3', bucketname = bucketname, key=''),
     previous_model_locs=[],
-    model_loc=DataLocation('filesystem',str(Path.cwd())+'/classifier_all_source.pkl'),
-    valresult_loc=DataLocation('filesystem',str(Path.cwd())+'/valresult_all_source.json'),
+    model_loc=DataLocation('filesystem',str(Path.cwd())+'/classifier_test.pkl'),
+    valresult_loc=DataLocation('filesystem',str(Path.cwd())+'/valresult_test.json'),
 
 )
-```
 
-```{python}
-%%time
+
+
 return_msg = train_classifier(train_msg)
-```
 
-```{python}
-print(f"Train time: {return_msg.runtime:.1f} s")
 
-```
-```{python}
-fileObj = open('return_msg_all.obj', 'wb')
+
+fileObj = open('return_msg.obj', 'wb')
 pickle.dump(return_msg,fileObj)
 fileObj.close()
-```
-```{python}
+
+
 classifier_filepath = Path.cwd() /'classifier_test.pkl'
 valresult_filepath = Path.cwd()  / 'valresult_test.json'
-```
 
-```{python}
+
+
 ref_accs_str = ", ".join([f"{100*acc:.1f}" for acc in return_msg.ref_accs])
 
 print("------------------------------")
@@ -314,13 +208,11 @@ print(
 print(f"Evaluation results:")
 with open(valresult_filepath) as f:
     valresult = json.load(f)
-```
 
-------------------------------------------------------------------------
 
 ## Create matching labels between coralnet and mermaid
 
-```{python}
+
 label_shortcode = pd.read_csv('coral_net_mermaid_labels.csv')
 
 # Rename ID to class and Default shord code to shortcode
@@ -329,9 +221,9 @@ label_shortcode = label_shortcode.rename(columns={'ID': 'classes', 'Default shor
 # Get the unique class and shortcode pairs
 label_shortcode = label_shortcode[['classes', 'shortcode']].drop_duplicates()
 
-```
 
-```{python}
+
+
 # Create label_list from the label_shortcode
 # Account for those classes that don't match in valresult with a default shortcode
 label_list = []
@@ -341,10 +233,10 @@ for label in valresult['classes']:
     else:
         label_list.append('unknown')
 
-```
 
 
-```{python}
+
+
 for ground_truth_i, prediction_i, score in zip(
     valresult['gt'], valresult['est'], valresult['scores']
 ):
@@ -352,20 +244,20 @@ for ground_truth_i, prediction_i, score in zip(
 
 print(f"Train time: {return_msg.runtime:.1f} s")
 
-```
 
-```{python}
+
+
 # From chosen_prj, get the features for the source from the features directory from the full Key path
 # E.g. coralnet_public_features/s1073/features/i84392.featurevector
 # Use Regex to get the features
 feature_files = chosen_prj[chosen_prj['Key'].str.contains(r'coralnet_public_features/.*/features/.*\.featurevector$')]
 
 
-```
+
 
 ## For each feature file, create a classify features message
 
-```{python}
+
 # Create a list of classify features messages
 # For each feature file, create a classify features message
 TOP_SCORES_PER_POINT = 5
@@ -393,5 +285,5 @@ for key in appended_df['key']:
 
     print(f"Classification time: {return_msg.runtime:.1f} s")
 
-```
+
 

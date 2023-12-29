@@ -69,6 +69,7 @@ fs = fs.S3FileSystem(
 )
 
 sources_to_keep = pd.read_csv(s3.open('allsource/list_of_sources.csv', mode='rb'))
+sources_to_keep = sources_to_keep.iloc[:250]
 # TODO check this is the most efficient way to load in parquet
 # Load Parquet file from S3 bucket using s3_client
 parquet_file = "pyspacer-test/allsource/CoralNet_Annotations_SourceID.parquet"
