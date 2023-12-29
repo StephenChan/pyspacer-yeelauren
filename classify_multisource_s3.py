@@ -170,7 +170,7 @@ logger.info('Write return_msg to S3')
 
 print(f"Train time: {return_msg.runtime:.1f} s")
 
-path = f's3://pyspacer-test/allsource/return_msg_all_source_{current_time}.pkl'
+path = f'allsource/return_msg_all_source_{current_time}.pkl'
 
 # Use pickle to serialize the object
 return_msg_bytes = pickle.dumps(return_msg)

@@ -1,0 +1,167 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import pickle
+import json
+import pandas as pd
+```
+
+```{python}
+valresult_filepath = 'valresult_all_source_2023-12-20_21-47-15.json'
+
+return_message_filepath = 'return_msg_all_source_2023-12-20_21-47-15.pkl'
+```
+```{python}
+# Open the pkl file and load the return message
+import pickle
+with open(return_message_filepath, 'rb') as f:
+    return_msg = pickle.load(f)
+```
+
+```{python}
+
+```
+
+```{python}
+
+ref_accs_str = ", ".join([f"{100*acc:.1f}" for acc in return_msg.ref_accs])
+
+print("------------------------------")
+
+print(f"New model's accuracy: {100*return_msg.acc:.1f}%")
+print(
+    "New model's accuracy progression (calculated on part of train_labels)"
+    f" after each epoch of training: {ref_accs_str}"
+)
+```
+
+```{python}
+
+with open(valresult_filepath) as f:
+    valresult = json.load(f)
+
+```
+
+```{python}
+print(len(valresult['scores']))
+```
+
+```{python}
+print(len(valresult['classes']))
+```
+
+
+## From Readme
+
+```{python}
+import json
+from spacer.data_classes import ValResults
+with open(valresult_filepath) as f:
+    valresult = ValResults.deserialize(json.load(f))
+for ground_truth_i, prediction_i, score in zip(
+    valresult.gt, valresult.est, valresult.scores
+):
+    print(
+        f"Actual = {valresult.classes[ground_truth_i]},"
+        f" Predicted = {valresult.classes[prediction_i]},"
+        f" Confidence = {100*score:.1f}%")
+```
+
+```{python}
+df = pd.DataFrame({
+    'Actual': [valresult.classes[i] for i in valresult.gt],
+    'Predicted': [valresult.classes[i] for i in valresult.est],
+    'Confidence': valresult.scores
+})
+
+# Print the DataFrame
+print(df)
+```
+
+```{python}
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import ConfusionMatrixDisplay
+# Get the actual and predicted labels from df
+actual_labels = df['Actual']
+predicted_labels = df['Predicted']
+
+# Create the confusion matrix
+cm = confusion_matrix(actual_labels, predicted_labels, labels=valresult.classes)
+
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=valresult.classes)
+fig, ax = plt.subplots(figsize=(15, 15))
+
+# Increase the font size of the labels
+plt.rcParams.update({'font.size': 16})
+
+# Plot the confusion matrix
+disp.plot(ax=ax)
+plt.show()
+```
+
+```{python}
+from sklearn.metrics import precision_score, recall_score, accuracy_score
+
+# Calculate precision, recall, and accuracy
+precision = precision_score(actual_labels, predicted_labels, average='macro')
+recall = recall_score(actual_labels, predicted_labels, average='macro')
+accuracy = accuracy_score(actual_labels, predicted_labels)
+
+print(f'Precision: {precision}')
+print(f'Recall: {recall}')
+print(f'Accuracy: {accuracy}')
+```
+```{python}
+label_shortcode = pd.read_csv('coral_net_mermaid_labels.csv')
+
+# Rename ID to class and Default shord code to shortcode
+label_shortcode = label_shortcode.rename(columns={'ID': 'classes', 'Default short code': 'shortcode'})
+```
+
+
+```{python}
+
+
+# Get the unique class and shortcode pairs
+label_shortcode = label_shortcode[['classes', 'shortcode']].drop_duplicates()
+
+```
+
+```{python}
+# Create label_list from the label_shortcode
+# Account for those classes that don't match in valresult with a default shortcode
+label_list = []
+for label in valresult['classes']:
+    if label in label_shortcode['classes'].values:
+        label_list.append(label_shortcode.loc[label_shortcode['classes'] == label, 'shortcode'].iloc[0])
+    else:
+        label_list.append('unknown')
+
+```
+
+```{python}
+
+label_list = [
+    label_ids_to_codes[str(label_id)] for label_id in valresult['classes']]
+for ground_truth_i, prediction_i, score in zip(
+    valresult['gt'], valresult['est'], valresult['scores']
+):
+    print(f"Actual = {label_list[ground_truth_i]}, Predicted = {label_list[prediction_i]}, Confidence = {100*score:.1f}%")
+
+```
+
+
+```{python}
+for ground_truth_i, prediction_i, score in zip(
+    valresult['gt'], valresult['est'], valresult['scores']
+):
+    print(f"Actual = {label_list[ground_truth_i]}, Predicted = {label_list[prediction_i]}, Confidence = {100*score:.1f}%")
+
+print(f"Train time: {return_msg.runtime:.1f} s")
+
+```
+```
