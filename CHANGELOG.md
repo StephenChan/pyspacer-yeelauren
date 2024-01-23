@@ -1,6 +1,12 @@
 # Changelog
 
-## 0.7.0 (WIP)
+## 0.8.0 (WIP)
+
+- `ImageFeatures` with `valid_rowcol=False` are no longer supported for training. For now they are still supported for classification.
+
+- S3 downloads are now always performed in the main thread, to prevent `RuntimeError: cannot schedule new futures after interpreter shutdown`.
+
+## 0.7.0
 
 - `TrainClassifierMsg` labels arguments have changed. Instead of `train_labels` and `val_labels`, it now takes a single argument `labels`, which is a `TrainingTaskLabels` object (basically a set of 3 `ImageLabels` objects: training set, reference set, and validation set).
 
@@ -11,6 +17,8 @@
 - Added `LOG_DESTINATION` and `LOG_LEVEL` config vars, providing configurable logging for test-suite runs or quick scripts.
 
 - Logging statements throughout pyspacer's codebase now use module-name loggers rather than the root logger, allowing end-applications to keep their logs organized.
+
+- Fixed bug where int config vars couldn't be configured through environment vars or secrets.json.
 
 - Updated various error cases (mainly SpacerInputErrors, asserts, and ValueErrors) with more descriptive error classes. The `SpacerInputError` class is no longer available.
 
