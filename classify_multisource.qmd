@@ -226,41 +226,22 @@ appended_df['key'] = appended_df.apply(lambda x: format_featurevector_key(x['Ima
 ```{python}
 # Save appended_df to parquet file
 
-appended_df.to_parquet('appended_df_p.parquet',  partition_cols=["Label ID"])
+#appended_df.to_parquet('appended_df_p.parquet',  partition_cols=["Label ID"])
 ```
 
 
 ## Training Data
 
--   This is a basic implementation on how to split the train and val labels by a 7:1 ratio. However, we may want to consider other ways of splitting the data in the future.
-
-
-```{python}
-%time
-# CoralNet uses a 7-to-1 ratio of train_labels to val_labels.
-# Calculate the split index
-total_labels = len(appended_df)
-train_size = int(total_labels * 7 / 8)  # 7 parts for training out of 8 total parts
-
-# Split the data
-train_labels_data = appended_df.iloc[:train_size]
-val_labels_data = appended_df.iloc[train_size:]
-
-```
-
--   To work with the `ImageLabels` class, we need to convert the train_labels_data and val_labels_data to the required format which is represented as a dictionary of lists of tuples. The dictionary keys are the image keys, and the values are lists of tuples of the form (row, column, label_id).
+-   To work with the `ImageLabels` class, we need to convert the labels_data to the required format which is represented as a dictionary of lists of tuples. The dictionary keys are the image keys, and the values are lists of tuples of the form (row, column, label_id).
 
 ```{python}
 # Convert train_labels_data and val_labels_data to the required format
-train_labels_data = {f"{key}": [tuple(x) for x in group[['Row', 'Column', 'Label ID']].values]
-                     for key, group in train_labels_data.groupby('key')}
-train_labels_data
+labels_data = {
+    f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
+    for key, group in appended_df.groupby("key")
+}
 ```
 
-```{python}
-val_labels_data = {f"{key}": [tuple(x) for x in group[['Row', 'Column', 'Label ID']].values]
-                   for key, group in val_labels_data.groupby('key')}
-```
 
 ## Use spacer to create train classifier msg
 
@@ -270,9 +251,7 @@ train_msg = TrainClassifierMsg(
     trainer_name='minibatch',
     nbr_epochs=1,
     clf_type='MLP',
-    # A subset
-    train_labels=ImageLabels(data = train_labels_data),
-    val_labels=ImageLabels(data = val_labels_data),
+    labels=ImageLabels(labels_data),
     #S3 bucketname
     features_loc=DataLocation('s3', bucketname = bucketname, key=''),
     previous_model_locs=[],
@@ -291,6 +270,11 @@ return_msg = train_classifier(train_msg)
 print(f"Train time: {return_msg.runtime:.1f} s")
 
 ```
+
+```{python}
+return_msg
+```
+
 ```{python}
 fileObj = open('return_msg_all.obj', 'wb')
 pickle.dump(return_msg,fileObj)
