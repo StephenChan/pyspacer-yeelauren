@@ -13,8 +13,8 @@ from io import BytesIO
 from pickle import Unpickler
 from urllib.error import URLError
 import urllib.request
-import boto3
-from botocore.exceptions import NoCredentialsError, ClientError
+import botocore.exceptions
+from boto3.s3.transfer import TransferConfig
 from PIL import Image
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import SGDClassifier
@@ -101,6 +101,10 @@ class S3Storage(Storage):
         if not bucketname:
             raise ValueError("Bucket name must be provided")
         self.bucketname = bucketname
+        # Prevent `RuntimeError: cannot schedule new futures after
+        # interpreter shutdown`.
+        # Based on https://github.com/etianen/django-s3-storage/pull/136
+        self.transfer_config = TransferConfig(use_threads=False)
         self.s3 = config.get_s3_conn()
 
     def store(self, key: str, stream: BytesIO):
@@ -110,7 +114,7 @@ class S3Storage(Storage):
         stream = BytesIO()
         try:
             obj = self.s3.Object(self.bucketname, key)
-            obj.download_fileobj(stream)
+            obj.download_fileobj(stream, Config=self.transfer_config)
             stream.seek(0)
             return stream
         except ClientError as e:
