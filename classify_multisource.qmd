@@ -50,14 +50,7 @@ from spacer.tasks import classify_features, extract_features, train_classifier
 
 ```
 
-```{python}
-# Load the pickle file and read it
-with open('return_msg_all_source_2023-12-19_19-50-46.pkl', 'rb') as f:
-    classifier = pickle.load(f)
-```
 
-```{python}
-```
 ## Assign the secrets to boto3
 
 ```{python}
@@ -113,20 +106,8 @@ for source in sources:
     chosen_sources.append(f'coralnet_public_features/{source}/annotations.csv')
 ```
 
-Use S3 to download the annotations.csv files for the chosen sources - check if they exist in the bucket first
-
-- Using the folders we created previously
-
 ```{python}
-folders = pd.read_csv('folders.csv')
-folders['chosen_sources'] = folders['source_folder'].apply(lambda x: f'{x}annotations.csv')
-```
-
-```{python}
-chosen_sources = folders['chosen_sources'].tolist()
-```
-
-```{python}
+len(chosen_sources)
 ```
 
 ```{python}
