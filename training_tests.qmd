@@ -1,0 +1,120 @@
+---
+title: "SKLearn training tests"
+format: html
+---
+
+Sklearn sampling
+
+
+```{python}
+
+# demonstrate that the train-test split procedure is repeatable
+from sklearn.datasets import make_blobs
+from sklearn.model_selection import train_test_split
+# create dataset
+X, y = make_blobs(n_samples=100)
+# split into train test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=1)
+# summarize first 5 rows
+print(X_train[:5, :])
+```
+
+```{python}
+# split again, and we should see the same split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=1)
+# summarize first 5 rows
+print(X_train[:5, :])
+```
+
+
+```{python}
+# split imbalanced dataset into train and test sets without stratification
+from collections import Counter
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+# create dataset
+X, y = make_classification(n_samples=100, weights=[0.94], flip_y=0, random_state=1)
+print(Counter(y))
+# split into train test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.50, random_state=1)
+print(Counter(y_train))
+print(Counter(y_test))
+```
+
+
+```{python}
+# summarize the sonar dataset
+from pandas import read_csv
+# load dataset
+url = 'https://raw.githubusercontent.com/jbrownlee/Datasets/master/sonar.csv'
+dataframe = read_csv(url, header=None)
+# split into input and output elements
+data = dataframe.values
+X, y = data[:, :-1], data[:, -1]
+print(X.shape, y.shape)
+```
+
+
+```{python}
+...
+# split into inputs and outputs
+X, y = data[:, :-1], data[:, -1]
+print(X.shape, y.shape)
+```
+
+
+
+```{python}
+# train-test split evaluation random forest on the sonar dataset
+from pandas import read_csv
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+# load dataset
+url = 'https://raw.githubusercontent.com/jbrownlee/Datasets/master/sonar.csv'
+dataframe = read_csv(url, header=None)
+data = dataframe.values
+# split into inputs and outputs
+X, y = data[:, :-1], data[:, -1]
+print(X.shape, y.shape)
+# split into train test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=1)
+print(X_train.shape, X_test.shape, y_train.shape, y_test.shape)
+# fit the model
+model = RandomForestClassifier(random_state=1)
+model.fit(X_train, y_train)
+# make predictions
+yhat = model.predict(X_test)
+# evaluate predictions
+acc = accuracy_score(y_test, yhat)
+print('Accuracy: %.3f' % acc)
+```
+
+
+```{python}
+
+# read data
+from sklearn.datasets import load_iris
+from sklearn.model_selection import train_test_split
+data = load_iris()
+X_train, X_test, y_train, y_test = train_test_split(data['data'], data['target'], test_size=.2)
+
+```
+
+## Libraries Pyspacer uses
+
+
+```{python}
+import numpy as np
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.linear_model import SGDClassifier
+from sklearn.neural_network import MLPClassifier
+```
+
+
+```{python}
+MLPClassifier
+```
+
+```{python}
+```
