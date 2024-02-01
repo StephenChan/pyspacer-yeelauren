@@ -6,6 +6,7 @@ from __future__ import annotations
 import abc
 import os
 import pickle
+import socket
 import warnings
 from functools import lru_cache
 from http.client import IncompleteRead
@@ -45,6 +46,8 @@ class Storage(abc.ABC):  # pragma: no cover
 class URLStorage(Storage):
     """ Loads items from URLs. Does not support store operations. """
 
+    TIMEOUT = 20.0
+
     def __init__(self):
         self.fs_storage = FileSystemStorage()
 
@@ -53,13 +56,26 @@ class URLStorage(Storage):
 
     def load(self, url: str) -> BytesIO:
         try:
-            download_response = urllib.request.urlopen(url)
-        except (URLError, ValueError) as e:
-            # Possible errors include:
-            # ValueError - unknown url type: '<url>'
+            # The timeout here defines the max time for both:
+            # - The initial connection; else URLError - <urlopen error timed
+            #   out> is raised.
+            # - A single idle period mid-response (not the entire response
+            #   time); else socket.timeout - timed out is raised
+            #   (socket.timeout is a deprecated alias of TimeoutError starting
+            #   in Python 3.10).
+            download_response = urllib.request.urlopen(
+                url, timeout=self.TIMEOUT)
+        except (socket.timeout, URLError, ValueError) as e:
+            # Besides timeouts, possible errors include:
+            # ValueError: unknown url type: '<url>'
             #   - Malformed url
-            # URLError - gaierror(11001, 'getaddrinfo failed')
+            # URLError: <urlopen error [Errno -5] No address associated with
+            # hostname> [Linux]
+            # OR gaierror(11001, 'getaddrinfo failed') [Win]
             #   - Invalid domain
+            # URLError: <urlopen error [Errno -3] Temporary failure in name
+            # resolution>
+            #   - No internet
             # HTTPError 404 or 500
             #   - HTTPError inherits from URLError
             raise URLDownloadError(
@@ -80,6 +96,10 @@ class URLStorage(Storage):
         raise TypeError('Delete operation not supported for URL storage.')
 
     def exists(self, url: str) -> bool:
+        """
+        URL existence can be a hard problem.
+        This implementation makes no guarantees on correctness.
+        """
         # HEAD can check for existence without downloading the entire resource
         try:
             request = urllib.request.Request(url, method='HEAD')
@@ -88,8 +108,9 @@ class URLStorage(Storage):
             return False
 
         try:
-            urllib.request.urlopen(request)
-        except URLError:
+            urllib.request.urlopen(request, timeout=self.TIMEOUT)
+        except (socket.timeout, URLError):
+            # Might be an unreachable domain, 404, or something else
             return False
         return True
 
@@ -97,10 +118,8 @@ class URLStorage(Storage):
 class S3Storage(Storage):
     """ Stores objects on AWS S3 """
 
-    def __init__(self, bucketname: str):
-        if not bucketname:
-            raise ValueError("Bucket name must be provided")
-        self.bucketname = bucketname
+    def __init__(self, bucket_name: str):
+        self.bucket_name = bucket_name
         # Prevent `RuntimeError: cannot schedule new futures after
         # interpreter shutdown`.
         # Based on https://github.com/etianen/django-s3-storage/pull/136
@@ -122,7 +141,13 @@ class S3Storage(Storage):
             raise SpacerInputError(f"Error loading object from S3: {str(e)}")
 
     def delete(self, key: str) -> None:
+        s3 = config.get_s3_conn()
+        s3.Object(self.bucketname, key).delete()
+
+    def exists(self, key: str):
+        s3 = config.get_s3_conn()
         try:
+            s3.Object(self.bucketname, key).load()
             self.s3.Object(self.bucketname, key).delete()
         except ClientError as e:
             raise SpacerInputError(f"Error deleting object from S3: {str(e)}")
@@ -195,15 +220,17 @@ def clear_memory_storage():
     _memorystorage = None
 
 
-def storage_factory(storage_type: str, bucketname: str | None = None):
+def storage_factory(storage_type: str, bucket_name: str | None = None):
 
     assert storage_type in config.STORAGE_TYPES
 
     if storage_type == 's3':
-        if bucketname is None:
-            raise ValueError("bucketname must be a string for s3 storage")
         return S3Storage(bucketname=bucketname)
-    elif storage_type == 'filesystem':
+    if storage_type == 'filesystem':
+        if bucket_name is None:
+            raise ValueError("bucket_name must be a string for s3 storage")
+        return S3Storage(bucket_name=bucket_name)
+    if storage_type == 'filesystem':
         return FileSystemStorage()
     elif storage_type == 'memory':
         global _memorystorage
@@ -347,7 +374,7 @@ class ClassifierUnpickler(Unpickler):
 @lru_cache(maxsize=3)
 def load_classifier(loc: 'DataLocation'):
 
-    storage = storage_factory(loc.storage_type, loc.bucketname)
+    storage = storage_factory(loc.storage_type, loc.bucket__name)
     stream = storage.load(loc.key)
     stream.seek(0)
 
