@@ -117,4 +117,137 @@ MLPClassifier
 ```
 
 ```{python}
+import torch
+import torchvision
+import torch.nn.functional as F
+from torch.utils.data.dataloader import DataLoader
+from torch import nn
+
+# Then we set some global variables that we will need later on. We are going to
+# work with MNIST(the famous handwritten digit classification dataset, in which our
+# data comes in the form of images)
+
+# division of the dataset in batches of 100 data points to be able to fit them in memory
+BATCH_SIZE = 100
+# 1 epoch = training with all batches in the dataset
+TRAIN_EPOCHS = 10
+# number of classes in the dataset
+CLASSES = 10
+# size in pixels of our images, in this case 28 pixels height and 28 pixels width
+INPUT_HEIGHT = 28
+INPUT_WIDTH = 28
+# TOTAL_INPUT = INPUT_HEIGHT * INPUT_WIDTH
+TOTAL_INPUT = 784
+# number of cases for train and test
+TRAIN_SIZE = 50000
+TEST_SIZE = 10000
+```
+
+
+```{python}
+# First, we define our model through a class since it's the recommended way to build the
+# computational graph (just think of this graph as a nice and clean way to think about 
+# mathematical expressions). The class header contains the name of the class FCN 
+# (Fully Connected Network) and the parameter nn.Module which basically indicates that
+# we are defining a customized neural network.
+
+class FCN(nn.Module):
+    # FCN is the class for my fully connected network, it inherits from nn.Module, which is the base
+    # class for all neural network modules in Torch.
+
+    # The next step is to define the initializations that will be performed upon creating an instance
+    # of the customized neural network. 
+    def __init__(self, n_hidden=600, n_classes=CLASSES):
+        super().__init__()
+        # all we do is to define our model, which is going to have four layers (l1 to l4). 
+        # The number of neurons in hidden layers is n_hidden. nn.linear includes weights and biases.
+        self.l1 = nn.Linear(INPUT_HEIGHT*INPUT_WIDTH, n_hidden)
+        self.l2 = nn.Linear(n_hidden, n_hidden)
+        self.l3 = nn.Linear(n_hidden, n_hidden)
+        self.l4 = nn.Linear(n_hidden, n_classes)
+
+    # This function is where the magic happens. This is where the data enters and is fed
+    # into the computational graph (i.e., the neural network structure we have built). 
+    def forward(self, x):
+        # propagates forward the data to the output neuron
+        x = x.view(-1, INPUT_HEIGHT*INPUT_WIDTH)
+        x = F.relu(self.l1(x))
+        x = F.relu(self.l2(x))
+        x = F.relu(self.l3(x))
+        x = F.log_softmax(self.l4(x), dim=1)
+        return x
+# now we are going to define two independent functions to train and test the network with our data
+# we will use them later in the main part of the code
+def train_fcn(net, optimizer, epoch, train_loader):
+    # trains the network with one batch at a time
+    net.train()
+    total_loss = 0.0
+    total = 0.0
+    correct = 0.0
+    for images, labels in train_loader:
+        images, labels = images.to(DEVICE), labels.to(DEVICE)
+        # sets gradients of all model parameters to zero
+        net.zero_grad()
+        # propagate inputs forward to get a prediction
+        pred = net.forward(images.cuda().view(-1, 784))
+        # compute loss and stats of performance, we transform the classes using a hot labels
+        # encoding (which is a common approach to solve multiclass problems) and use binary cross entropy
+        loss = F.binary_cross_entropy_with_logits(
+            pred, F.one_hot(labels.cuda(), CLASSES).float())
+        total_loss += loss
+        total += labels.size(0)
+        correct += (pred.argmax(-1) == labels.cuda()).sum().item()
+        # propagate backward
+        loss.backward()
+        # optimise parameters of the network
+        optimizer.step()
+    # print performance for this epoch
+    print(
+        f"Epoch {epoch}: loss {total_loss:.5f} accuracy {correct / total * 100:.5f}")
+
+def test_fcn(net, test_loader):
+    # computes test accuracy
+    total = 0.0
+    correct = 0.0
+    for images, labels in test_loader:
+        images, labels = images.to(DEVICE), labels.to(DEVICE)
+        pred = net.forward(images.cuda().view(-1, 784))
+        total += labels.size(0)
+        correct += (pred.argmax(-1) == labels.cuda()).sum().item()
+    print(f"Test accuracy: {correct / total * 100:.5f}")
+# And this is it... where we train and test our network!
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Comment if you want to run on CPU
+torch.set_default_tensor_type('torch.cuda.FloatTensor')
+
+# convert to tensor and normalise data
+tr = torchvision.transforms.Compose([
+    torchvision.transforms.ToTensor(),
+    torchvision.transforms.Normalize((0.5,), (0.5,))
+])
+
+# Set download=True to download the dataset from the internet
+mnist = torchvision.datasets.mnist.MNIST(
+    root='images', transform=tr, download=True)
+
+# divide data in train and test
+train_set, test_set = torch.utils.data.random_split(
+    mnist, lengths=(TRAIN_SIZE, TEST_SIZE))
+
+# load the batches
+train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True)
+test_loader = DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=True)
+
+# create an instance of our neural network
+fcn = FCN().to(DEVICE)
+
+# set the optimiser (Stochastic Gradient Descent) with the hyperparams
+optim = torch.optim.SGD(fcn.parameters(recurse=True), lr=0.1, momentum=0.95)
+
+print("Training...")
+# train and test!
+for epoch in range(TRAIN_EPOCHS):
+    train_fcn(fcn, optim, epoch, train_loader)
+test_fcn(fcn, test_loader)
 ```
