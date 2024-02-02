@@ -128,10 +128,10 @@ train_msg = TrainClassifierMsg(
     features_loc=DataLocation("s3", bucket_name=bucketname, key=""),
     previous_model_locs=[],
     model_loc=DataLocation(
-        "s3", bucket_name="pyspacer-test", key="allsource" + f"/classifier_all_source_{current_time}.pkl"
+        "s3", bucket_name="pyspacer-test", key="allsource" + f"/classifier_multi_source_{current_time}.pkl"
     ),
     valresult_loc=DataLocation(
-        "s3", bucket_name="pyspacer-test", key="allsource" + f"/valresult_all_source_{current_time}.json"
+        "s3", bucket_name="pyspacer-test", key="allsource" + f"/valresult_multi_source_{current_time}.json"
     ),
 )
 
@@ -142,7 +142,7 @@ logger.info(f'Train time: {return_msg.runtime:.1f} s')
 log_memory_usage('Memory usage after training')
 logger.info('Write return_msg to S3')
 
-path = f's3://pyspacer-test/allsource/return_msg_all_source_{current_time}.pkl'
+path = f's3://pyspacer-test/allsource/return_msg_multi_source_{current_time}.pkl'
 
 # Use pickle to serialize the object
 return_msg_bytes = pickle.dumps(return_msg)
