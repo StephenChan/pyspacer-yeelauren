@@ -173,7 +173,7 @@ train_msg = TrainClassifierMsg(
     train_labels=ImageLabels(data = train_labels_data),
     val_labels=ImageLabels(data = val_labels_data),
     #S3 bucketname
-    features_loc=DataLocation('s3', bucketname = bucketname, key=''),
+    features_loc=DataLocation('s3', bucket_name = bucketname, key=''),
     previous_model_locs=[],
     model_loc=DataLocation('filesystem',str(Path.cwd())+'/classifier_test.pkl'),
     valresult_loc=DataLocation('filesystem',str(Path.cwd())+'/valresult_test.json'),
@@ -265,7 +265,7 @@ messages = []
 for key in appended_df['key']:
     message = ClassifyFeaturesMsg(
         job_token=key,
-        feature_loc=DataLocation('s3', key=key, bucketname = 'coralnet-mermaid-share'),
+        feature_loc=DataLocation('s3', key=key, bucket_name = 'coralnet-mermaid-share'),
         classifier_loc=DataLocation('filesystem', classifier_filepath),
     )
     messages.append(message)

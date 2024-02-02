@@ -127,12 +127,12 @@ class S3Storage(Storage):
         self.s3 = config.get_s3_conn()
 
     def store(self, key: str, stream: BytesIO):
-        self.s3.Bucket(self.bucketname).put_object(Body=stream, Key=key)     
+        self.s3.Bucket(self.bucket_name).put_object(Body=stream, Key=key)     
     
     def load(self, key: str)-> BytesIO:
         stream = BytesIO()
         try:
-            obj = self.s3.Object(self.bucketname, key)
+            obj = self.s3.Object(self.bucket_name, key)
             obj.download_fileobj(stream, Config=self.transfer_config)
             stream.seek(0)
             return stream
@@ -142,18 +142,18 @@ class S3Storage(Storage):
 
     def delete(self, key: str) -> None:
         s3 = config.get_s3_conn()
-        s3.Object(self.bucketname, key).delete()
+        s3.Object(self.bucket_name, key).delete()
 
     def exists(self, key: str):
         s3 = config.get_s3_conn()
         try:
-            s3.Object(self.bucketname, key).load()
-            self.s3.Object(self.bucketname, key).delete()
+            s3.Object(self.bucket_name, key).load()
+            self.s3.Object(self.bucket_name, key).delete()
         except ClientError as e:
             raise SpacerInputError(f"Error deleting object from S3: {str(e)}")
     def exists(self, key: str)-> bool:
         try:
-            self.s3.Object(self.bucketname, key).load()
+            self.s3.Object(self.bucket_name, key).load()
             return True
         except NoSuchKey:
             return False
@@ -225,7 +225,7 @@ def storage_factory(storage_type: str, bucket_name: str | None = None):
     assert storage_type in config.STORAGE_TYPES
 
     if storage_type == 's3':
-        return S3Storage(bucketname=bucketname)
+        return S3Storage(bucket_name=bucket_name)
     if storage_type == 'filesystem':
         if bucket_name is None:
             raise ValueError("bucket_name must be a string for s3 storage")
@@ -244,7 +244,7 @@ def storage_factory(storage_type: str, bucket_name: str | None = None):
 
 
 def store_image(loc: 'DataLocation', img: Image):
-    storage = storage_factory(loc.storage_type, loc.bucketname)
+    storage = storage_factory(loc.storage_type, loc.bucket_name)
     with BytesIO() as stream:
         try:
             img.save(stream, 'JPEG')
@@ -256,9 +256,9 @@ def store_image(loc: 'DataLocation', img: Image):
 
 def load_image(loc: 'DataLocation'):
     try:
-        # Determine if bucketname is needed based on storage_type.
+        # Determine if bucket_name is needed based on storage_type.
         if loc.storage_type == 's3':
-            storage = storage_factory(loc.storage_type, loc.bucketname)
+            storage = storage_factory(loc.storage_type, loc.bucket_name)
         else:
             storage = storage_factory(loc.storage_type)
 
@@ -270,7 +270,7 @@ def load_image(loc: 'DataLocation'):
 def store_classifier(loc: 'DataLocation', clf: CalibratedClassifierCV):
     if not hasattr(clf, 'calibrated_classifiers_'):
         raise ValueError("Only fitted classifiers can be stored.")
-    storage = storage_factory(loc.storage_type, loc.bucketname)
+    storage = storage_factory(loc.storage_type, loc.bucket_name)
     storage.store(loc.key, BytesIO(pickle.dumps(clf, protocol=2)))
 
 
@@ -374,7 +374,7 @@ class ClassifierUnpickler(Unpickler):
 @lru_cache(maxsize=3)
 def load_classifier(loc: 'DataLocation'):
 
-    storage = storage_factory(loc.storage_type, loc.bucket__name)
+    storage = storage_factory(loc.storage_type, loc.bucket_name)
     stream = storage.load(loc.key)
     stream.seek(0)
 

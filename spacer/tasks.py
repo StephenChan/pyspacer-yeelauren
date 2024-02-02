@@ -5,7 +5,6 @@ import time
 import traceback
 from typing import Callable
 from logging import getLogger
-from typing import Callable
 from spacer import config
 from spacer.data_classes import ImageFeatures
 from spacer.messages import \

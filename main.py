@@ -38,7 +38,7 @@ with open('secrets.json', 'r') as f:
 bucketname = 'pyspacer-test' 
 image_loc = DataLocation(storage_type='s3',
                         key='images-annotated/23_7168.JPG',
-                        bucketname=bucketname)
+                        bucket_name=bucketname)
                          
                          
 

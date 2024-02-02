@@ -58,7 +58,7 @@ def list_folders(s3_client, bucketname, prefix):
 
     Example:
         s3_client = boto3.client('s3', region_name='us-west-2')
-        bucketname = 'my-bucket'
+        bucket_name = 'my-bucket'
         prefix = 'my-folder/'
         folders = list_folders(s3_client, bucketname, prefix)
         print(folders)
@@ -371,7 +371,7 @@ train_msg = TrainClassifierMsg(
     train_labels=ImageLabels(data = train_labels_data),
     val_labels=ImageLabels(data = val_labels_data),
     #S3 bucketname
-    features_loc=DataLocation('s3', bucketname = bucketname, key=''),
+    features_loc=DataLocation('s3', bucket_name = bucketname, key=''),
     previous_model_locs=[],
     model_loc=DataLocation('filesystem',str(Path.cwd())+'/classifier_all_source.pkl'),
     valresult_loc=DataLocation('filesystem',str(Path.cwd())+'/valresult_all_source.json'),

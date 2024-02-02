@@ -147,7 +147,7 @@ class FeatureExtractor(abc.ABC):
 
         if not already_in_filesystem:
             # Must load into the filesystem.
-            storage = storage_factory(loc.storage_type, loc.bucketname)
+            storage = storage_factory(loc.storage_type, loc.bucket_name)
             data = storage.load(loc.key)
             file_storage.store(str(filepath_for_cache), data)
 
@@ -190,7 +190,7 @@ class FeatureExtractor(abc.ABC):
 
         else:
 
-            storage = storage_factory(loc.storage_type, loc.bucketname)
+            storage = storage_factory(loc.storage_type, loc.bucket_name)
             datastream = storage.load(loc.key)
 
             remote_loaded = False
