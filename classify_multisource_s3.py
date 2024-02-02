@@ -30,7 +30,7 @@ from spacer.tasks import (
 load_dotenv()
 # Set up logging 
 logging.basicConfig(
-    filename='app.log',
+    filename='app_all_source.log',
      filemode='w',
     level=logging.INFO,  # Set the logging level (e.g., INFO, DEBUG, ERROR)
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
