@@ -6,6 +6,7 @@ from __future__ import annotations
 import abc
 import os
 import pickle
+import socket
 import warnings
 from functools import lru_cache
 from http.client import IncompleteRead
@@ -16,6 +17,7 @@ from urllib.error import URLError
 import urllib.request
 
 import botocore.exceptions
+from boto3.s3.transfer import TransferConfig
 from PIL import Image
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import SGDClassifier
@@ -81,6 +83,8 @@ class RemoteStorage(Storage):
 class URLStorage(RemoteStorage):
     """ Loads items from URLs. Does not support store operations. """
 
+    TIMEOUT = 20.0
+
     def __init__(self):
         self.fs_storage = FileSystemStorage()
 
@@ -89,13 +93,26 @@ class URLStorage(RemoteStorage):
 
     def _load_remote(self, url: str) -> BytesIO:
         try:
-            download_response = urllib.request.urlopen(url)
-        except (URLError, ValueError) as e:
-            # Possible errors include:
-            # ValueError - unknown url type: '<url>'
+            # The timeout here defines the max time for both:
+            # - The initial connection; else URLError - <urlopen error timed
+            #   out> is raised.
+            # - A single idle period mid-response (not the entire response
+            #   time); else socket.timeout - timed out is raised
+            #   (socket.timeout is a deprecated alias of TimeoutError starting
+            #   in Python 3.10).
+            download_response = urllib.request.urlopen(
+                url, timeout=self.TIMEOUT)
+        except (socket.timeout, URLError, ValueError) as e:
+            # Besides timeouts, possible errors include:
+            # ValueError: unknown url type: '<url>'
             #   - Malformed url
-            # URLError - gaierror(11001, 'getaddrinfo failed')
+            # URLError: <urlopen error [Errno -5] No address associated with
+            # hostname> [Linux]
+            # OR gaierror(11001, 'getaddrinfo failed') [Win]
             #   - Invalid domain
+            # URLError: <urlopen error [Errno -3] Temporary failure in name
+            # resolution>
+            #   - No internet
             # HTTPError 404 or 500
             #   - HTTPError inherits from URLError
             raise URLDownloadError(
@@ -116,6 +133,10 @@ class URLStorage(RemoteStorage):
         raise TypeError('Delete operation not supported for URL storage.')
 
     def exists(self, url: str) -> bool:
+        """
+        URL existence can be a hard problem.
+        This implementation makes no guarantees on correctness.
+        """
         # HEAD can check for existence without downloading the entire resource
         try:
             request = urllib.request.Request(url, method='HEAD')
@@ -124,8 +145,9 @@ class URLStorage(RemoteStorage):
             return False
 
         try:
-            urllib.request.urlopen(request)
-        except URLError:
+            urllib.request.urlopen(request, timeout=self.TIMEOUT)
+        except (socket.timeout, URLError):
+            # Might be an unreachable domain, 404, or something else
             return False
         return True
 
@@ -133,27 +155,32 @@ class URLStorage(RemoteStorage):
 class S3Storage(RemoteStorage):
     """ Stores objects on AWS S3 """
 
-    def __init__(self, bucketname: str):
-        self.bucketname = bucketname
+    def __init__(self, bucket_name: str):
+        self.bucket_name = bucket_name
+        # Prevent `RuntimeError: cannot schedule new futures after
+        # interpreter shutdown`.
+        # Based on https://github.com/etianen/django-s3-storage/pull/136
+        self.transfer_config = TransferConfig(use_threads=False)
 
     def store(self, key: str, stream: BytesIO):
         s3 = config.get_s3_conn()
-        s3.Bucket(self.bucketname).put_object(Body=stream, Key=key)
+        s3.Bucket(self.bucket_name).put_object(Body=stream, Key=key)
 
     def _load_remote(self, key: str):
         s3 = config.get_s3_conn()
         stream = BytesIO()
-        s3.Object(self.bucketname, key).download_fileobj(stream)
+        s3.Object(self.bucket_name, key).download_fileobj(
+            stream, Config=self.transfer_config)
         return stream
 
     def delete(self, key: str) -> None:
         s3 = config.get_s3_conn()
-        s3.Object(self.bucketname, key).delete()
+        s3.Object(self.bucket_name, key).delete()
 
     def exists(self, key: str):
         s3 = config.get_s3_conn()
         try:
-            s3.Object(self.bucketname, key).load()
+            s3.Object(self.bucket_name, key).load()
             return True
         except botocore.exceptions.ClientError:
             return False
@@ -214,12 +241,14 @@ def clear_memory_storage():
     _memorystorage = None
 
 
-def storage_factory(storage_type: str, bucketname: str | None = None):
+def storage_factory(storage_type: str, bucket_name: str | None = None):
 
     assert storage_type in config.STORAGE_TYPES
 
     if storage_type == 's3':
-        return S3Storage(bucketname=bucketname)
+        if bucket_name is None:
+            raise ValueError("bucket_name must be a string for s3 storage")
+        return S3Storage(bucket_name=bucket_name)
     if storage_type == 'filesystem':
         return FileSystemStorage()
     if storage_type == 'memory':

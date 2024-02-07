@@ -6,7 +6,7 @@ import tempfile
 import time
 import traceback
 from logging import getLogger
-
+from typing import Callable
 from spacer import config
 from spacer.data_classes import ImageFeatures
 from spacer.messages import \
@@ -27,9 +27,7 @@ logger = getLogger(__name__)
 def extract_features(msg: ExtractFeaturesMsg) -> ExtractFeaturesReturnMsg:
 
     img = load_image(msg.image_loc)
-
-    check_extract_inputs(img, msg.rowcols, msg.image_loc.key)
-
+    check_extract_inputs(img, msg.rowcols, msg.image_loc.key)   
     with config.log_entry_and_exit('actual extraction'):
         features, return_msg = msg.extractor(img, msg.rowcols)
 
