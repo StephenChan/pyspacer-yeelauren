@@ -6,12 +6,13 @@ python-native data-structures such that it can be stored.
 from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
+from collections import Counter
 from io import BytesIO
 from pprint import pformat
 
 import numpy as np
 
-from spacer.storage import storage_factory
+from spacer.storage import RemoteStorage, storage_factory
 
 
 class DataClass(ABC):  # pragma: no cover
@@ -74,13 +75,20 @@ class ImageLabels(DataClass):
                  data: dict[str, list[tuple[int, int, int]]]):
         self._data = data
 
-        self.label_count = sum([len(labels) for labels in data.values()])
+        self.label_count_per_class = Counter()
+        for single_image_annotations in data.values():
+            labels = [label for (row, col, label) in single_image_annotations]
+            self.label_count_per_class.update(labels)
 
-        self.classes_set = set()
-        for single_image_labels in data.values():
-            single_image_classes = set(
-                label for (row, col, label) in single_image_labels)
-            self.classes_set |= single_image_classes
+    @property
+    def classes_set(self):
+        return set(self.label_count_per_class.keys())
+
+    @property
+    def label_count(self):
+        # In Python 3.10+, this can be
+        # `return self.label_count_per_class.total()`
+        return sum(self.label_count_per_class.values())
 
     @classmethod
     def example(cls):
@@ -256,9 +264,12 @@ class ImageFeatures(DataClass):
 
     @classmethod
     def load(cls, loc: 'DataLocation'):
-
         storage = storage_factory(loc.storage_type, loc.bucket_name)
-        stream = storage.load(loc.key)
+        # TODO: This is extremely ugly OOP
+        if isinstance(storage, RemoteStorage):
+            stream = storage.load(loc.key, loc.filesystem_cache)
+        else:
+            stream = storage.load(loc.key)
         stream.seek(0)
         try:
             data = np.load(stream)

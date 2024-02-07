@@ -1,7 +1,10 @@
 from __future__ import annotations
+from collections import defaultdict
+from enum import Enum
 from logging import getLogger
 
 from PIL import Image
+from sklearn.model_selection import train_test_split
 
 from spacer import config
 from spacer.data_classes import ImageLabels
@@ -61,22 +64,168 @@ def check_extract_inputs(image: Image,
                 f" valid range of 0-{im_width - 1}.")
 
 
+class ClassSamplingMethod(Enum):
+    """
+    How to consider classes when splitting annotations between
+    train, ref, and val sets.
+    """
+    # Sample with no regard to classes.
+    IGNORE = 'ignore'
+    # Stratified sampling by class: an A%/B%/C% train/ref/val split means
+    # about an A%/B%/C% split of each class.
+    #
+    # Stratification checks that the number of annotations in each
+    # set isn't less than the number of unique classes.
+    # However, each set is NOT guaranteed to have at least 1 of each class.
+    # If stratification is calculated such that a set would get <0.5
+    # annotations of a class, then that set gets 0 of that class.
+    STRATIFIED = 'stratified'
+
+
+def split_labels(
+    labels_in: ImageLabels,
+    # Reference set's max ratio (also capped by
+    # TRAINING_BATCH_LABEL_COUNT) and validation set's ratio.
+    # Remaining annotations go to the training set.
+    # Example: (0.5, 0.15) for a 5% ref / 15% val / 80% train split.
+    split_ratios: tuple[float, float],
+    class_sampling: ClassSamplingMethod,
+) -> TrainingTaskLabels:
+    """
+    Split annotation data into training, reference, and validation sets.
+    """
+
+    # Determine train/ref/val annotation count goals.
+    # Note that these aren't necessarily going to be the final counts for
+    # training.
+    # If class filtering occurs after this function call, then the counts
+    # will change.
+    ref_max_ratio, val_ratio = split_ratios
+    ref_goal_size = min(
+        round(labels_in.label_count * ref_max_ratio),
+        config.TRAINING_BATCH_LABEL_COUNT)
+    val_goal_size = round(labels_in.label_count * val_ratio)
+    train_goal_size = (
+        labels_in.label_count - ref_goal_size - val_goal_size)
+
+    # Preempt set-size ValueErrors that would be raised from
+    # train_test_split().
+    # TrainingLabelErrors are more specific and thus should be nicer for
+    # error handling.
+
+    if class_sampling == ClassSamplingMethod.IGNORE:
+        set_minimum_size = 1
+        explanation = "Each set must be non-empty."
+    else:
+        # Stratified by class
+        set_minimum_size = len(labels_in.classes_set)
+        explanation = (
+            f"Each set's size must not be less than the number of classes"
+            f" ({set_minimum_size}) to work with train_test_split().")
+    if ref_goal_size < set_minimum_size \
+            or val_goal_size < set_minimum_size \
+            or train_goal_size < set_minimum_size:
+        raise TrainingLabelsError(
+            f"Not enough annotations to populate train/ref/val sets."
+            f" Split was calculated as"
+            f" {train_goal_size}/{ref_goal_size}/{val_goal_size}."
+            f" {explanation}"
+        )
+
+    # Add annotations to the three sets.
+
+    train_data = defaultdict(list)
+    ref_data = defaultdict(list)
+    val_data = defaultdict(list)
+
+    # Map integer indices to image keys.
+    # This is just a list, and the 'lookup keys' are the list indices.
+    #
+    # We want this so we have smaller identifiers for each image
+    # (int instead of an arbitrary string)
+    # to use in the potentially very long, RAM-consuming lists below.
+    image_lookup = labels_in.image_keys
+    # Flat lists of annotation identifiers (image index +
+    # annotation-in-image index) and labels.
+    annotation_indices_flat = []
+    labels_flat = []
+
+    for image_index, image_key in enumerate(image_lookup):
+        for annotation_index, annotation in enumerate(labels_in[image_key]):
+            _row, _column, label = annotation
+            annotation_indices_flat.append((image_index, annotation_index))
+            labels_flat.append(label)
+
+    # Leave the split to scikit-learn. It can only split a set into two,
+    # so we first make it do a train+ref / val split, then a train / ref
+    # split.
+    # See ClassSamplingMethod for details on stratification.
+
+    train_ref_indices, val_indices = train_test_split(
+        annotation_indices_flat,
+        test_size=val_goal_size, random_state=0, shuffle=True,
+        stratify=(
+            None if class_sampling == ClassSamplingMethod.IGNORE
+            else labels_flat),
+    )
+
+    annotation_indices_flat_reverse_lookup = {
+        annotation_index_pair: list_index
+        for list_index, annotation_index_pair
+        in enumerate(annotation_indices_flat)
+    }
+    train_ref_labels_flat = []
+    for annotation_index_pair in train_ref_indices:
+        index_into_all_annotations = \
+            annotation_indices_flat_reverse_lookup[annotation_index_pair]
+        train_ref_labels_flat.append(labels_flat[index_into_all_annotations])
+
+    train_indices, ref_indices = train_test_split(
+        train_ref_indices,
+        test_size=ref_goal_size, random_state=0, shuffle=True,
+        stratify=(
+            None if class_sampling == ClassSamplingMethod.IGNORE
+            else train_ref_labels_flat),
+    )
+
+    for set_indices, set_data in [
+        (train_indices, train_data),
+        (ref_indices, ref_data),
+        (val_indices, val_data),
+    ]:
+        for image_index, annotation_index in set_indices:
+            image_key = image_lookup[image_index]
+            set_data[image_key].append(
+                labels_in[image_key][annotation_index])
+
+    return TrainingTaskLabels(
+        train=ImageLabels(train_data),
+        ref=ImageLabels(ref_data),
+        val=ImageLabels(val_data),
+    )
+
+
 def preprocess_labels(
-        # Training labels (annotations); two acceptable formats:
-        #
-        # 1) An ImageLabels instance, which this function decides how to
-        # split up into training, reference, and validation sets.
-        # 2) A dict which has keys 'train', 'ref', and 'val',
-        # each mapping to a separate ImageLabels instance.
-        labels_in: ImageLabels | TrainingTaskLabels,
-        # If present, the passed labels are filtered so that any classes not
-        # included in this set have their labels discarded.
-        accepted_classes: set[int] | None = None) -> TrainingTaskLabels:
+    # Training labels (annotations); two acceptable formats:
+    #
+    # 1) An ImageLabels instance, which this function decides how to
+    # split up into training, reference, and validation sets.
+    # 2) A dict which has keys 'train', 'ref', and 'val',
+    # each mapping to a separate ImageLabels instance.
+    labels_in: ImageLabels | TrainingTaskLabels,
+    # If present, the passed labels are filtered so that any classes not
+    # included in this set have their labels discarded.
+    accepted_classes: set[int] | None = None,
+    # See split_labels().
+    split_ratios: tuple[float, float] = (0.1, 0.1),
+    # See split_labels().
+    class_sampling: ClassSamplingMethod = ClassSamplingMethod.STRATIFIED,
+) -> TrainingTaskLabels:
     """
     This function can be used to preprocess labels before creating a
     TrainClassifierMsg. It does:
     1) Splitting of labels into train/ref/val, if not already done
-    2) Filtering of labels by valid_classes, if that arg is specified
+    2) Filtering of labels by accepted_classes, if that arg is specified
     3) Error checks
 
     This is also called by pyspacer after receiving a TrainClassifierMsg
@@ -84,79 +233,64 @@ def preprocess_labels(
     """
 
     if isinstance(labels_in, TrainingTaskLabels):
+
         # The caller has decided how to split the data into
         # training, reference, and validation sets.
+
         labels = labels_in
+
+        if accepted_classes:
+            for set_name in ['train', 'ref', 'val']:
+                labels[set_name] = \
+                    labels[set_name].filter_classes(accepted_classes)
+
     else:
-        # Split data into training, reference, and validation sets.
-        #
-        # Arbitrarily, validation gets 10%, reference gets
-        # min(10%, TRAINING_BATCH_LABEL_COUNT), training gets the rest.
-        # This is imprecise because it's split on the image level, not the
-        # label level, and images can have different numbers of labels.
-        #
-        # The split is done in a way which guarantees that all 3 sets are
-        # non-empty if there are at least 3 images.
-        if len(labels_in) < 3:
-            raise TrainingLabelsError(
-                f"The training data has {len(labels_in)} image(s),"
-                f" but need at least 3 to populate train/ref/val sets.")
 
-        train_data = dict()
-        ref_data = dict()
-        val_data = dict()
-        ref_label_count = 0
-        ref_done = False
+        # The caller is leaving the split to pyspacer.
 
-        for image_index, image_key in enumerate(labels_in.image_keys):
-            this_image_labels = labels_in[image_key]
+        pre_split_labels = labels_in
 
-            if image_index % 10 == 0:
-                # 1st, 11th, 21st, etc. images go in val.
-                val_data[image_key] = this_image_labels
-            elif not ref_done and image_index % 10 == 1:
-                # 2nd, 12th, 22nd, etc. images go in ref, if ref still
-                # has room within the batch size; else, go in train.
-                if (ref_label_count + len(this_image_labels)
-                        <= config.TRAINING_BATCH_LABEL_COUNT):
-                    ref_data[image_key] = this_image_labels
-                    ref_label_count += len(this_image_labels)
-                else:
-                    # ref would go over the batch size if it added this
-                    # image.
-                    train_data[image_key] = this_image_labels
-                    ref_done = True
-            else:
-                # The rest go in train.
-                train_data[image_key] = this_image_labels
+        if accepted_classes:
+            pre_split_labels = pre_split_labels.filter_classes(
+                accepted_classes)
 
-        labels = TrainingTaskLabels(
-            train=ImageLabels(train_data),
-            ref=ImageLabels(ref_data),
-            val=ImageLabels(val_data),
+        if class_sampling == ClassSamplingMethod.STRATIFIED:
+
+            # train_test_split() will want each class to have at least as many
+            # annotations as sets (even though it doesn't guarantee what each
+            # set ends up with).
+            # Otherwise it'll raise an error. So, filter out the rare classes
+            # first.
+            common_enough_classes = [
+                label
+                for label, count in labels_in.label_count_per_class.items()
+                if count >= 3]
+            if len(common_enough_classes) != len(labels_in.classes_set):
+                pre_split_labels = pre_split_labels.filter_classes(
+                    common_enough_classes)
+
+        labels = split_labels(
+            pre_split_labels,
+            split_ratios=split_ratios,
+            class_sampling=class_sampling,
         )
 
     # Identify classes common to both train and ref.
+
     train_classes = labels.train.classes_set
     ref_classes = labels.ref.classes_set
     train_ref_classes = train_classes.intersection(ref_classes)
 
-    # Further filter the classes if this arg was specified.
-    if accepted_classes:
-        classes_filter = \
-            train_ref_classes.intersection(accepted_classes)
-    else:
-        classes_filter = train_ref_classes
-
-    if len(classes_filter) <= 1:
+    if len(train_ref_classes) <= 1:
         raise TrainingLabelsError(
             f"Need multiple classes to do training."
             f" After preprocessing training data, there are"
-            f" {len(classes_filter)} class(es) left.")
+            f" {len(train_ref_classes)} class(es) left.")
 
     for set_name in ['train', 'ref', 'val']:
-        labels[set_name] = \
-            labels[set_name].filter_classes(classes_filter)
+        if not labels[set_name].classes_set.issubset(train_ref_classes):
+            labels[set_name] = \
+                labels[set_name].filter_classes(train_ref_classes)
 
         if len(labels[set_name]) == 0:
             raise TrainingLabelsError(
