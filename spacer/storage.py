@@ -264,11 +264,7 @@ def storage_factory(storage_type: str, bucket_name: str | None = None):
 
     if storage_type == 's3':
         return S3Storage(bucket_name=bucket_name)
-    if storage_type == 'filesystem':
-        if bucket_name is None:
-            raise ValueError("bucket_name must be a string for s3 storage")
-        return S3Storage(bucket_name=bucket_name)
-    if storage_type == 'filesystem':
+    elif storage_type == 'filesystem':
         return FileSystemStorage()
     elif storage_type == 'memory':
         global _memorystorage
