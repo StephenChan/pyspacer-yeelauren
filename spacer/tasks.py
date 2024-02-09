@@ -41,13 +41,13 @@ def extract_features(msg: ExtractFeaturesMsg) -> ExtractFeaturesReturnMsg:
 
 def train_classifier(msg: TrainClassifierMsg) -> TrainClassifierReturnMsg:
     trainer: ClassifierTrainer = trainer_factory(msg.trainer_name)
-
+    logger.info('Entering Train Classifier')
     labels = preprocess_labels(msg.labels)
-    logger.debug(
+    logger.info(
         f"Unique classes:"
         f" Train + Ref = {len(labels.ref.classes_set)},"
         f" Val = {len(labels.val.classes_set)}")
-    logger.debug(
+    logger.info(
         f"Label count:"
         f" Train = {labels.train.label_count},"
         f" Ref = {labels.ref.label_count},"

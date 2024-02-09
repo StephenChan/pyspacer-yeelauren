@@ -34,13 +34,13 @@ def train(train_labels: ImageLabels,
           nbr_epochs: int,
           clf_type: str) -> tuple[CalibratedClassifierCV, list[float]]:
 
-    logger.debug(
+    logger.info(
         f"Data sets:"
         f" Train = {len(train_labels)} images,"
         f" {train_labels.label_count} labels;"
         f" Ref = {len(ref_labels)} images,"
         f" {ref_labels.label_count} labels")
-    logger.debug(
+    logger.info(
         f"Mini-batch size: {config.TRAINING_BATCH_LABEL_COUNT} labels")
 
     # train_labels and ref_labels should already be trimmed down to the
@@ -117,6 +117,7 @@ def load_image_data(labels_data: list[tuple[int, int, int]],
     Loads a feature vector and labels of a single image, and generates
     element-matching pairs.
     """
+    
     # Load features.
     features = ImageFeatures.load(feature_loc)
 
@@ -163,6 +164,7 @@ def load_data_as_mini_batches(labels: ImageLabels,
     a batch.
     Note that a single image's features may straddle multiple batches.
     """
+    logger.info('Load as minibatches')
     image_keys = labels.image_keys
 
     # Shuffle the order of images.

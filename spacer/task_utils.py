@@ -100,6 +100,7 @@ def split_labels(
     # training.
     # If class filtering occurs after this function call, then the counts
     # will change.
+    logger.info('Split Ratios')
     ref_max_ratio, val_ratio = split_ratios
     ref_goal_size = min(
         round(labels_in.label_count * ref_max_ratio),
@@ -231,12 +232,13 @@ def preprocess_labels(
     This is also called by pyspacer after receiving a TrainClassifierMsg
     to ensure the error checks are done.
     """
-
+    logger.info('Preprocessing labels.')
     if isinstance(labels_in, TrainingTaskLabels):
 
         # The caller has decided how to split the data into
         # training, reference, and validation sets.
 
+        logger.info('By Passing Creating Labels')
         labels = labels_in
 
         if accepted_classes:
@@ -247,7 +249,7 @@ def preprocess_labels(
     else:
 
         # The caller is leaving the split to pyspacer.
-
+        logger.info('Split by Pyspacer')
         pre_split_labels = labels_in
 
         if accepted_classes:
@@ -255,7 +257,7 @@ def preprocess_labels(
                 accepted_classes)
 
         if class_sampling == ClassSamplingMethod.STRATIFIED:
-
+            logger.info('Stratified Split')
             # train_test_split() will want each class to have at least as many
             # annotations as sets (even though it doesn't guarantee what each
             # set ends up with).
