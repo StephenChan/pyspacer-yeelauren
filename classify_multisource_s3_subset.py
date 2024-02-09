@@ -1,37 +1,38 @@
 """
-Train and classify from multisource (or project) using featurevector files provided on S3 from a subset of sources
+Train and classify from multisource (or project) using featurevector files provided on S3
+from a subset of sources
 
 """
 import json
+import logging
 import os
 import pickle
-import s3fs
-import boto3
-import duckdb
-import logging 
-import psutil
 import threading
 from datetime import datetime
+
+import boto3
+import duckdb
+import numpy as np
 import pandas as pd
+import psutil
 import pyarrow.parquet as pq
+import s3fs
 from botocore.exceptions import BotoCoreError, ClientError
 from dotenv import load_dotenv
 from pyarrow import fs
+from sklearn.model_selection import train_test_split
 
 from spacer.data_classes import ImageLabels
-from spacer.messages import (
-    DataLocation,
-    TrainClassifierMsg,
-)
+from spacer.messages import DataLocation, TrainClassifierMsg, TrainingTaskLabels
+from spacer.task_utils import preprocess_labels
 from spacer.tasks import (
     train_classifier,
 )
-from spacer.task_utils import preprocess_labels
 
 load_dotenv()
 # Set up logging 
 logging.basicConfig(
-    filename='app.log',
+    filename='multisource_log.log',
      filemode='w',
     level=logging.INFO,  # Set the logging level (e.g., INFO, DEBUG, ERROR)
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -77,7 +78,7 @@ sources_to_keep = pd.DataFrame(
     }
 )
 # TODO check this is the most efficient way to load in parquet
-# Load Parquet file from S3 bucket using s3_client
+# Load Parquet file from S3 bucket using pyarrow
 parquet_file = "pyspacer-test/allsource/CoralNet_Annotations_SourceID.parquet"
 logger.info('Reading parquet file from S3 bucket')
 log_memory_usage('Memory usage after reading parquet file')
@@ -104,14 +105,39 @@ conn.execute(
 
 selected_sources = conn.execute("SELECT * FROM selected_sources").fetchdf()
 log_memory_usage('Memory usage after wrangling in DuckDB')
-# Training based on CoralNet's ratio
-# TODO: This is a good place to start, but we should also consider the ratio of images per label.
 
+# Remove label counts lower than 1
+count_labels = selected_sources["Label ID"].value_counts()
+selected_sources = selected_sources[selected_sources["Label ID"].isin(count_labels[count_labels > 1].index)]
 
-# Rewrite
-labels_data = {
+# Use Sklearn to split the data into training and validation sets
+# Split the data into training and validation, test sets
+# SKlearn can only split twice
+# Set random state
+rng = np.random.RandomState(0)
+train_labels, val_test_labels = train_test_split(selected_sources,
+                                                test_size=0.20,
+                                                random_state=rng,
+                                                shuffle=True,
+                                                stratify=selected_sources["Label ID"])
+# Split the validation and test sets
+
+val_labels, test_labels = train_test_split(val_test_labels, test_size=0.5, random_state=rng)
+
+# Create a dictionary of the labels to go into existing pyspacer code
+train_labels = {
     f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
-    for key, group in selected_sources.groupby("key")
+    for key, group in train_labels.groupby("key")
+}
+
+val_labels = {
+    f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
+    for key, group in val_labels.groupby("key")
+}
+
+test_labels = {
+    f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
+    for key, group in test_labels.groupby("key")
 }
 
 
@@ -121,10 +147,15 @@ logger.info('Create TrainClassifierMsg')
 train_msg = TrainClassifierMsg(
     job_token="mulitest",
     trainer_name="minibatch",
-    nbr_epochs=1,
+    nbr_epochs=10,
     clf_type="MLP",
     # A subset
-    labels=ImageLabels(labels_data),
+    #labels=preprocess_labels(ImageLabels(labels_data)),
+    labels = TrainingTaskLabels(
+        train = ImageLabels(train_labels),
+        val = ImageLabels(val_labels),
+        ref = ImageLabels(test_labels)
+    ),
     features_loc=DataLocation("s3", bucket_name=bucketname, key=""),
     previous_model_locs=[],
     model_loc=DataLocation(

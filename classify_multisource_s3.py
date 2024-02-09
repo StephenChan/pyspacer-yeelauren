@@ -3,29 +3,31 @@ Train and classify from multisource (or project) using featurevector files provi
 
 """
 import json
+import logging
 import os
 import pickle
-import s3fs
-import boto3
-import duckdb
-import logging 
-import psutil
 import threading
 from datetime import datetime
+
+import boto3
+import duckdb
+import numpy as np
 import pandas as pd
+import psutil
 import pyarrow.parquet as pq
+import s3fs
 from botocore.exceptions import BotoCoreError, ClientError
 from dotenv import load_dotenv
 from pyarrow import fs
+from sklearn.model_selection import train_test_split
 
 from spacer.data_classes import ImageLabels
-from spacer.messages import (
-    DataLocation,
-    TrainClassifierMsg,
-)
+from spacer.messages import DataLocation, TrainClassifierMsg, TrainingTaskLabels
+from spacer.task_utils import preprocess_labels
 from spacer.tasks import (
     train_classifier,
 )
+
 
 load_dotenv()
 # Set up logging 
@@ -98,58 +100,56 @@ conn.execute(
 
 selected_sources = conn.execute("SELECT * FROM selected_sources").fetchdf()
 log_memory_usage('Memory usage after wrangling in DuckDB')
-# Training based on CoralNet's ratio
-# TODO: This is a good place to start, but we should also consider the ratio of images per label.
-# logger.info('Split Training/ Val based on CoralNet\'s ratio')
-# total_labels = len(selected_sources)
-# train_size = int(total_labels * 7 / 8)
+#
+# Remove label counts lower than 1
+count_labels = selected_sources["Label ID"].value_counts()
+selected_sources = selected_sources[selected_sources["Label ID"].isin(count_labels[count_labels > 1].index)]
 
-# logger.info('Create train_labels_data and val_labels_data')
-# # Use duckdb to create train_labels_data and val_labels_data
-# train_labels_data = conn.execute(
-#     f"SELECT * FROM selected_sources LIMIT {train_size}"
-# ).fetchdf()
+# Use Sklearn to split the data into training and validation sets
+# Split the data into training and validation, test sets
+# SKlearn can only split twice
+# Set random state
+rng = np.random.RandomState(0)
+train_labels, val_test_labels = train_test_split(selected_sources,
+                                                test_size=0.20,
+                                                random_state=rng,
+                                                shuffle=True,
+                                                stratify=selected_sources["Label ID"])
+# Split the validation and test sets
 
-# val_labels_data = conn.execute(
-#     f"SELECT * FROM selected_sources OFFSET {train_size} ROWS"
-# ).fetchdf()
+val_labels, test_labels = train_test_split(val_test_labels, test_size=0.5, random_state=rng)
 
+# Create a dictionary of the labels to go into existing pyspacer code
 logger.info('Restructure as Tuples for ImageLabels')
 
-# Rewrite
-# train_labels_data = {
-#     f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
-#     for key, group in train_labels_data.groupby("key")
-# }
-
-
-# val_labels_data = {
-#     f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
-#     for key, group in val_labels_data.groupby("key")
-# }
-
-# log_memory_usage('Memory usage after creating train_labels_data and val_labels_data')
-# logger.info('Create TrainClassifierMsg')
-
-# labels_data = {
-#     f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
-#     for key, group in selected_sources.groupby("key")
-# }
-labels_data = {
+train_labels = {
     f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
-    for key, group in selected_sources.groupby("key")
+    for key, group in train_labels.groupby("key")
+}
+
+val_labels = {
+    f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
+    for key, group in val_labels.groupby("key")
+}
+
+test_labels = {
+    f"{key}": [tuple(x) for x in group[["Row", "Column", "Label ID"]].values]
+    for key, group in test_labels.groupby("key")
 }
 
 log_memory_usage('Memory usage after creating train_labels_data and val_labels_data')
 logger.info('Create TrainClassifierMsg')
 
 train_msg = TrainClassifierMsg(
-    job_token="mulitest",
+    job_token="allsourcetest",
     trainer_name="minibatch",
-    nbr_epochs=1,
+    nbr_epochs=10,
     clf_type="MLP",
-    # A subset
-    labels=ImageLabels(labels_data),
+    labels = TrainingTaskLabels(
+        train = ImageLabels(train_labels),
+        val = ImageLabels(val_labels),
+        ref = ImageLabels(test_labels)
+    ),
     features_loc=DataLocation("s3", bucket_name=bucketname, key=""),
     previous_model_locs=[],
     model_loc=DataLocation(
