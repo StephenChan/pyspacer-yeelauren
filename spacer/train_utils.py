@@ -76,6 +76,7 @@ def train(train_labels: ImageLabels,
             logger.debug(f"Epoch {epoch}, acc: {ref_acc[-1]}")
 
     with config.log_entry_and_exit("calibration"):
+        logger.info('Calibrated Classifier CV')
         clf_calibrated = CalibratedClassifierCV(clf, cv="prefit")
         clf_calibrated.fit(refx, refy)
 
@@ -131,6 +132,7 @@ def load_batch_data(labels: ImageLabels,
     Loads features and labels, and builds element-matching lists
     for use with methods such as CalibratedClassifierCV.fit().
     """
+    logger.info('Load batch data')
     batch = []
 
     for image_key in labels.image_keys:
