@@ -166,7 +166,6 @@ def load_data_as_mini_batches(labels: ImageLabels,
     a batch.
     Note that a single image's features may straddle multiple batches.
     """
-    logger.info('Load as minibatches')
     image_keys = labels.image_keys
 
     # Shuffle the order of images.
