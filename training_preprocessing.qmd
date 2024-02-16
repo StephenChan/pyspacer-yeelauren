@@ -1,0 +1,458 @@
+---
+title: "Pre-Processing Notebook for Train Splits"
+format: html
+---
+
+
+```{python}
+import json
+import os
+import pickle
+import s3fs
+import boto3
+import duckdb
+import logging 
+import psutil
+import threading
+from datetime import datetime
+import pandas as pd
+import pyarrow.parquet as pq
+from botocore.exceptions import BotoCoreError, ClientError
+from dotenv import load_dotenv
+from pyarrow import fs
+
+from spacer.data_classes import ImageLabels
+from spacer.messages import (
+    DataLocation,
+    TrainClassifierMsg,
+)
+from spacer.tasks import (
+    train_classifier,
+)
+
+load_dotenv()
+pd.set_option('display.float_format', '{:.2f}'.format)
+```
+
+```{python, eval=False}
+# Old sources
+sources_to_keep = pd.read_csv('list_of_sources.csv')
+sources_to_keep = sources_to_keep.iloc[:250]
+```
+
+```{python}
+# Iains filtering
+sources_to_keep = pd.read_csv('/home/lauren/Projects/mermaid-pyspacer-labels/CoralNetSourcesToKeep.csv')
+# Change Source ID to source_id and format source_id as string
+sources_to_keep = sources_to_keep.rename(columns={"Source ID": "source_id"})
+
+
+sources_to_keep["source_id"] = sources_to_keep["source_id"].astype(str)
+# Filter the sources based on ToKeep column  == 1
+sources_to_keep = sources_to_keep[sources_to_keep["ToKeep"] == 1]
+
+# prefix source_id strings with an 's'
+sources_to_keep["source_id"] = "s" + sources_to_keep["source_id"]
+```
+
+
+
+
+```{python}
+parquet_file = "data/CoralNet_Annotations_SourceID.parquet"
+
+
+df = pq.read_table(parquet_file)
+# Connect to DuckDB
+
+conn = duckdb.connect()
+
+```
+
+
+```{python}
+# Create a DuckDB table called annotation_table
+# Create the feature vector parsing in duckdb
+# Add a new column 'key' to the table
+# Update the 'key' column with the desired values
+conn.execute(
+    f"""
+    CREATE TABLE annotation_table AS 
+    SELECT *, 'coralnet_public_features/' || CAST(source_id AS VARCHAR) || '/features/i' || CAST("Image ID" AS VARCHAR) || '.featurevector' AS key
+    FROM df 
+    """
+)
+```
+
+```{python}
+# Selected Sources
+selected_sources = conn.execute(
+    f"""
+    CREATE TABLE selected_sources AS 
+    SELECT *
+    FROM annotation_table
+    WHERE "source_id" IN {tuple(sources_to_keep["source_id"].tolist())}
+    """
+)
+```
+
+```{python}
+selected_sources = conn.execute("SELECT * FROM selected_sources").fetchdf()
+```
+
+## Filter by Label ID
+
+```{python}
+labels_to_keep = pd.read_csv('/home/lauren/Projects/mermaid-pyspacer-labels/CoralNet_MERMAID_Labels_ToKeep.csv')
+# Rename "ID" to "Label ID"
+labels_to_keep = labels_to_keep.rename(columns={"ID": "Label ID"})
+```
+
+
+```{python}
+# For now just the ToKeep==1 
+labels_to_keep = labels_to_keep[labels_to_keep["ToKeep"] == 1]
+```
+
+```{python}
+# Keep only the ID, NewID, MERMAID_BA, and ToKeep columns
+labels_to_keep = labels_to_keep[["Label ID", "NewID", "MERMAID_BA", "ToKeep"]]
+```
+
+```{python}
+# Filter selected_sources by Label ID in labels to keep
+selected_sources_labels = selected_sources[selected_sources["Label ID"].isin(labels_to_keep["Label ID"])]
+```
+
+```{python}
+# Join selected_sources_labels to labels_to_keep on Label ID
+selected_sources_labels = selected_sources_labels.merge(labels_to_keep, on="Label ID")
+```
+
+```{python}
+# Group Label ID and New ID by count
+label_counts = selected_sources_labels.groupby(["Label ID", "NewID"]).size().reset_index(name="counts")
+```
+
+```{python}
+# Check if NewID is NA anywhere
+selected_sources_labels["NewID"].isna().sum()
+
+# Check that we filtered correctly
+# Calulcate if ToKeep is 0
+selected_sources_labels["ToKeep"].value_counts()
+```
+
+```{python}
+# Delete Label ID column and rename NewID to Label ID
+selected_sources_labels = selected_sources_labels.drop(columns=["Label ID"])
+selected_sources_labels = selected_sources_labels.rename(columns={"NewID": "Label ID"})
+```
+
+
+
+```{python}
+# Filter giant table for the label id 58 
+conn.execute(
+    f"""
+    SELECT *
+    FROM annotation_table
+    WHERE "Label ID" = 58
+    """
+)
+```
+
+```{python}
+import pyarrow as pa
+# Save selected_sources_labels to a parquet file
+# Convert df to pyarrow
+table = pa.Table.from_pandas(selected_sources_labels)
+# Write to parquet
+pq.write_table(table, "selected_sources_labels.parquet")
+```
+
+
+```{python}
+# Rename reserved names in the table
+conn.execute(
+    f"""
+    SELECT 
+        Row AS row_data,
+        "Column" AS column_data,
+    FROM 
+        annotation_table;
+"""
+).fetchdf()
+```
+
+## Number of Classes
+```{python}
+# Count number of Classes
+number_of_classes = selected_sources.groupby(["Label ID"]).size()
+
+number_of_classes
+```
+
+```{python}
+selected_sources.groupby("Label ID")["source_id"].nunique()
+```
+
+```{python}
+# Locate these Label IDs
+# 58, 4953, 4954, 1583
+selected_sources[selected_sources["Label ID"].isin([58, 4953, 4954, 1583])]
+```
+
+## Image Statistics
+
+```{python}
+# Get some statistics for selected sources
+
+
+# Get the number of annotations per image
+number_of_annotations_per_image = selected_sources.groupby("Image ID").size().reset_index(name="counts")
+
+number_of_annotations_per_image
+
+
+```
+
+```{python}
+# Write to csv
+number_of_annotations_per_image.to_csv("number_of_annotations_per_image.csv")
+```
+
+`number_of_annotations_per_image.shape[0]` images
+
+```{python}
+# Alternatively use value_counts
+# selected_sources['Image ID'].value_counts()
+```
+
+```{python}
+number_of_annotations_per_image.describe()
+```
+
+## One annotation per image
+
+```{python}
+# Get the image IDs with only one image
+one_image = number_of_annotations_per_image[number_of_annotations_per_image["counts"] == 1]
+
+```
+
+There are `one_image_sources.shape[0]` images with only one annotation.
+
+
+```{python}
+# Query the selected_sources table for the image IDs with only one image
+one_image_sources = selected_sources[selected_sources["Image ID"].isin(one_image["Image ID"])]
+# Of the one_image_sources get the number of images per source
+one_image_sources.groupby("source_id").size().reset_index(name="counts")
+```
+
+### Sidebar
+
+- Singular images are all from one source s1388 with one label per image
+
+
+```{python}
+one_image_sources.groupby(["source_id", "Label ID"]).size().reset_index(name="counts")
+```
+
+
+```{python}
+# Look at source s1388 in the selected_sources table
+# Group by Image ID and Label ID
+s1388 = selected_sources[selected_sources["source_id"] == "s1388"]
+s1388.groupby(["Image ID", "Label ID"]).size().reset_index(name="counts")
+```
+
+- Not every image in s1388 has a singular label
+
+
+## Sampling
+
+- No singular images
+- Majority of images occur in the 10 - 15 range
+
+
+```{python}
+
+source_image_count = selected_sources.groupby(["source_id","Image ID"]).size().reset_index(name="count")
+```
+
+
+```{python}
+source_image_count.to_csv("source_image_count.csv")
+```
+
+
+```{python}
+source_image_count.describe()
+```
+
+
+```{python}
+# largest source_image_count 
+source_image_count[source_image_count["count"] == source_image_count["count"].max()]
+```
+
+# Sources and Labels
+
+```{python}
+import pandas as pd
+
+# Assuming 'selected_sources' is a pandas DataFrame
+counts = selected_sources.groupby(['source_id', 'Label ID']).size().sort_values(ascending=False)
+
+# Convert counts to DataFrame
+counts_df = counts.reset_index(name='count')
+
+# Calculate proportions
+total = counts_df['count'].sum()
+counts_df['proportion'] = counts_df['count'].apply(lambda x: x / total)
+
+print(counts_df)
+```
+
+```{python}
+# Filter out labels that have a count of 1
+counts_df = counts_df[counts_df["count"] > 2]
+```
+
+```{python}
+# Calculate proportions
+total = counts_df['count'].sum()
+counts_df['proportion'] = counts_df['count'].apply(lambda x: x / total)
+
+print(counts_df)
+```
+
+# Label Distribution
+
+## Label Counts
+
+
+```{python}
+label_counts = selected_sources.groupby("Label ID").size().reset_index(name="counts")
+label_counts = label_counts.sort_values(by='counts', ascending=False)
+```
+```{python}
+label_counts.describe()
+```
+
+## Minority Classes 
+
+```{python}
+# Remove labels that have a count of 1
+label_counts = label_counts[label_counts["counts"] > 2]
+```
+
+```{python}
+label_counts['Label ID'] = pd.Categorical(label_counts['Label ID'], ordered=True)
+```
+
+```{python}
+label_counts.describe()
+```
+
+## Majority Classes 
+
+```{python}
+# Remove max count and label
+max_label = label_counts[label_counts["counts"]==label_counts["counts"].max()]
+max_label
+```
+
+```{python}
+# Remove max label from label_counts
+label_counts = label_counts[label_counts["Label ID"] != max_label["Label ID"].values[0]]
+```
+
+```{python}
+# Over 200,000 count
+label_counts[label_counts["counts"] > 200000]
+```
+
+```{python}
+# Proportion of labels from the label_counts
+label_counts["proportion"] = label_counts["counts"] / label_counts["counts"].sum()
+```
+
+```{python}
+label_counts.describe()
+```
+
+- capture the 75th percentile
+```{python}
+prop_75 = label_counts[label_counts["proportion"] >= 0.0001]
+```
+
+
+```{python}
+prop_75_source = counts_df.set_index('Label ID').join(prop_75.set_index('Label ID'),how='inner', lsuffix='_caller', rsuffix='_other')
+
+```
+
+```{python}
+prop_75_source['source_prop'] = (prop_75_source['count'] / prop_75_source['counts'])*100
+```
+
+```{python}
+
+
+```
+```{python}
+# Create plotnine  bat chart of label counts
+from plotnine import ggplot, aes, geom_bar, coord_flip, theme, element_text, scale_x_discrete, scale_y_continuous, labs
+
+(ggplot(label_counts, aes(x="Label ID", y="counts")) +
+ geom_bar(stat="identity") +
+ scale_y_continuous(
+                    limits=(0, label_counts['counts'].max())
+ ) +
+ theme(axis_text_x=element_text(rotation=90, hjust=1)) +
+ labs(title="Label Distribution", x="Label ID", y="Counts")
+)
+```
+
+```{python}
+# Create a seaborn  chart of label counts
+import seaborn as sns
+label_counts_sorted = label_counts.sort_values(by='counts', ascending=False)
+label_counts_sorted = label_counts_sorted[label_counts["counts"] < 200000]
+sns.set_theme(style="whitegrid")
+
+p = sns.catplot(label_counts_sorted, x="Label ID", y="counts")
+
+
+```
+
+```{python}
+# Convert the "Label ID" column to a categorical type
+selected_sources["Label ID"] = selected_sources["Label ID"].astype('category')
+
+sns.displot(selected_sources, x="Label ID", kind="kde")
+```
+
+```{python}
+sns.displot(selected_sources, x="Label ID")
+```
+
+```{python}
+from imblearn.over_sampling import RandomOverSampler
+ros = RandomOverSampler(random_state=0)
+X_resampled, y_resampled = ros.fit_resample(X, y)
+from collections import Counter
+print(sorted(Counter(y_resampled).items()))
+[(0, 4674), (1, 4674), (2, 4674)]
+```
+```{python}
+labels_by_source = selected_sources.groupby(["source_id","Label ID"]).size().reset_index(name="counts")
+```
+
+
+```{python}
+labels_by_source.describe()
+```
