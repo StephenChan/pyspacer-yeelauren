@@ -34,10 +34,12 @@ load_dotenv()
 pd.set_option('display.float_format', '{:.2f}'.format)
 ```
 
+
+## Sources 
 ```{python, eval=False}
 # Old sources
-sources_to_keep = pd.read_csv('list_of_sources.csv')
-sources_to_keep = sources_to_keep.iloc[:250]
+#sources_to_keep = pd.read_csv('list_of_sources.csv')
+#sources_to_keep = sources_to_keep.iloc[:250]
 ```
 
 ```{python}
@@ -55,7 +57,9 @@ sources_to_keep = sources_to_keep[sources_to_keep["ToKeep"] == 1]
 sources_to_keep["source_id"] = "s" + sources_to_keep["source_id"]
 ```
 
-
+```{python}
+sources_to_keep.shape
+```
 
 
 ```{python}
@@ -100,6 +104,13 @@ selected_sources = conn.execute(
 selected_sources = conn.execute("SELECT * FROM selected_sources").fetchdf()
 ```
 
+- gut check values
+
+```{python}
+# Count the unique number of source_ids in selected_sources
+selected_sources["source_id"].nunique()
+```
+
 ## Filter by Label ID
 
 ```{python}
@@ -120,12 +131,16 @@ labels_to_keep = labels_to_keep[["Label ID", "NewID", "MERMAID_BA", "ToKeep"]]
 ```
 
 ```{python}
+selected_sources.shape
+```
+
+```{python}
 # Filter selected_sources by Label ID in labels to keep
 selected_sources_labels = selected_sources[selected_sources["Label ID"].isin(labels_to_keep["Label ID"])]
 ```
 
 ```{python}
-# Join selected_sources_labels to labels_to_keep on Label ID
+## Join selected_sources_labels to labels_to_keep on Label ID
 selected_sources_labels = selected_sources_labels.merge(labels_to_keep, on="Label ID")
 ```
 

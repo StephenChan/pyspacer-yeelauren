@@ -147,3 +147,5 @@ tmp/
 output/
 
 *.parquet
+
+data/
