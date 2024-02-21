@@ -6,9 +6,10 @@ from __future__ import annotations
 import random
 import string
 from collections.abc import Generator
+import logging
 from logging import getLogger
 from typing import List, Tuple
-
+import psutil
 import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import SGDClassifier
@@ -18,8 +19,13 @@ from spacer import config
 from spacer.data_classes import ImageLabels, ImageFeatures
 from spacer.exceptions import RowColumnInvalidError, RowColumnMismatchError
 from spacer.messages import DataLocation
-
+from logging import getLogger
 logger = getLogger(__name__)
+
+def log_memory_usage(message):
+    memory_usage = psutil.virtual_memory()
+    logger.info(f"{message} - Memory usage: {memory_usage.percent}%")
+
 
 
 # Implicit type alias; revisit in Python 3.10
@@ -51,6 +57,7 @@ def train(train_labels: ImageLabels,
     # Load reference data (must hold in memory for the calibration)
     with config.log_entry_and_exit("loading of reference data"):
         refx, refy = load_batch_data(ref_labels, feature_loc)
+        log_memory_usage('loaded batch data')
 
     # Initialize classifier and ref set accuracy list
     with config.log_entry_and_exit("training using " + clf_type):
@@ -64,7 +71,7 @@ def train(train_labels: ImageLabels,
             clf = SGDClassifier(loss='log_loss', average=True, random_state=0)
 
         ref_acc = []
-
+        log_memory_usage('Entering Epoch loop')
         for epoch in range(nbr_epochs):
             for x, y in load_data_as_mini_batches(
                 labels=train_labels, feature_loc=feature_loc,
@@ -173,7 +180,7 @@ def load_data_as_mini_batches(labels: ImageLabels,
     np.random.shuffle(image_keys)
 
     current_batch = []
-
+    
     for image_key in image_keys:
 
         feature_loc.key = image_key
@@ -205,7 +212,7 @@ def match_features_and_labels(features: ImageFeatures,
         raise RowColumnInvalidError(
             f"{image_key}: Features without rowcols are no longer supported"
             f" for training.")
-
+    logger.info('Match features and labels')
     # With new data structure just check that the sets of row, col
     # given by the labels are available in the features.
     rc_features_set = set([(pf.row, pf.col) for pf in
@@ -253,6 +260,7 @@ def make_random_data(im_count: int,
     Utility method for testing that generates an ImageLabels instance
     complete with stored ImageFeatures.
     """
+    log_memory_usage('random')
     data = {}
     for _ in range(im_count):
 

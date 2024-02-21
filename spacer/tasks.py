@@ -20,8 +20,13 @@ from spacer.messages import \
 from spacer.storage import load_image, load_classifier, store_classifier
 from spacer.task_utils import check_extract_inputs, preprocess_labels
 from spacer.train_classifier import ClassifierTrainer, trainer_factory
+from logging import getLogger
+import psutil
 
 logger = getLogger(__name__)
+def log_memory_usage(message):
+    memory_usage = psutil.virtual_memory()
+    logger.info(f"{message} - Memory usage: {memory_usage.percent}%")
 
 
 def extract_features(msg: ExtractFeaturesMsg) -> ExtractFeaturesReturnMsg:

@@ -7,13 +7,20 @@ import abc
 import time
 
 from sklearn.calibration import CalibratedClassifierCV
-
+import psutil
 from spacer import config
 from spacer.data_classes import ValResults
 from spacer.messages import (
     DataLocation, TrainClassifierReturnMsg, TrainingTaskLabels)
 from spacer.train_utils import train, evaluate_classifier, calc_acc
+import logging
+from logging import getLogger
 
+logger = getLogger(__name__)
+
+def log_memory_usage(message):
+    memory_usage = psutil.virtual_memory()
+    logger.info(f"{message} - Memory usage: {memory_usage.percent}%")
 
 class ClassifierTrainer(abc.ABC):  # pragma: no cover
 
@@ -44,6 +51,9 @@ class MiniBatchTrainer(ClassifierTrainer):
                  clf_type):
 
         assert clf_type in config.CLASSIFIER_TYPES
+        #log
+        logger.info("Entering minibatch trainer")        
+     
         # Train.
         t0 = time.time()
         clf, ref_accs = train(
@@ -57,10 +67,11 @@ class MiniBatchTrainer(ClassifierTrainer):
         # Evaluate previous classifiers on validation set.
         pc_accs = []
         for pc_model in pc_models:
+            logger.info('pc_model')
             pc_gts, pc_ests, _ = evaluate_classifier(
                 pc_model, labels['val'], feature_loc)
             pc_accs.append(calc_acc(pc_gts, pc_ests))
-
+        log_memory_usage('End of minibatch Trainer')
         return \
             clf, \
             ValResults(
