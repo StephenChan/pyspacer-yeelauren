@@ -212,8 +212,7 @@ def match_features_and_labels(features: ImageFeatures,
         raise RowColumnInvalidError(
             f"{image_key}: Features without rowcols are no longer supported"
             f" for training.")
-    logger.info('Match features and labels')
-    # With new data structure just check that the sets of row, col
+     # With new data structure just check that the sets of row, col
     # given by the labels are available in the features.
     rc_features_set = set([(pf.row, pf.col) for pf in
                            features.point_features])
