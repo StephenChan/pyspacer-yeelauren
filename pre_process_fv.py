@@ -7,6 +7,7 @@ import multiprocessing
 import dask.bag as db
 from dask.distributed import Client
 from pyarrow import fs
+import os
 import dask
 
 dask.config.set({"dataframe.query-planning": True})
@@ -16,10 +17,6 @@ from spacer.messages import DataLocation
 
 
 # Load selected_sources_labels parquet file
-selected_sources_labels = pd.read_parquet(
-    "pyspacer-test/allsource/selected_sources_labels.parquet", filesystem=fs
-)
-list_of_s3_urls = selected_sources_labels["key"].unique()
 
 # bucket_name =
 # prefix =
@@ -43,12 +40,11 @@ s3 = s3fs.S3FileSystem(
     secret=secrets["AWS_SECRET_ACCESS_KEY"],
     anon=False,
 )
-fs = fs.S3FileSystem(
-    region=os.environ["S3_REGION"],
-    access_key=os.environ["S3_ACCESS_KEY"],
-    secret_key=os.environ["S3_SECRET_KEY"],
-)
 
+selected_sources_labels = pd.read_parquet(
+    "pyspacer-test/allsource/selected_sources_labels.parquet", filesystem=s3
+)
+list_of_s3_urls = selected_sources_labels["key"].unique()
 
 def load_featurevector(loc: DataLocation) -> pd.DataFrame:
     location = DataLocation("s3", bucket_name=bucket_name, key=loc)
