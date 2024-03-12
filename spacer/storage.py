@@ -160,7 +160,6 @@ class S3Storage(RemoteStorage):
         # interpreter shutdown`.
         # Based on https://github.com/etianen/django-s3-storage/pull/136
         self.transfer_config = TransferConfig(use_threads=False)
-        self.s3 = config.get_s3_conn()
 
     def store(self, key: str, stream: BytesIO):
         s3 = config.get_s3_conn()
@@ -169,14 +168,9 @@ class S3Storage(RemoteStorage):
     def _load_remote(self, key: str):
         s3 = config.get_s3_conn()
         stream = BytesIO()
-        try:
-            obj = self.s3.Object(self.bucket_name, key)
-            obj.download_fileobj(stream, Config=self.transfer_config)
-            stream.seek(0)
-            return stream
-        except ClientError as e:
-            # Handle specific S3 client errors
-            raise SpacerInputError(f"Error loading object from S3: {str(e)}")
+        s3.Object(self.bucket_name, key).download_fileobj(
+            stream, Config=self.transfer_config)
+        return stream
 
     def delete(self, key: str) -> None:
         s3 = config.get_s3_conn()
@@ -186,21 +180,9 @@ class S3Storage(RemoteStorage):
         s3 = config.get_s3_conn()
         try:
             s3.Object(self.bucket_name, key).load()
-            self.s3.Object(self.bucket_name, key).delete()
-        except ClientError as e:
-            raise SpacerInputError(f"Error deleting object from S3: {str(e)}")
-    def exists(self, key: str)-> bool:
-        try:
-            self.s3.Object(self.bucket_name, key).load()
             return True
-        except NoSuchKey:
+        except botocore.exceptions.ClientError:
             return False
-        except ClientError as e:
-        # Other ClientErrors indicate issues with the S3 service or connection.
-            if e.response['Error']['Code'] == 'NoSuchKey':
-        # Handle a corner case where NoSuchKey is wrapped in a ClientError.
-                return False
-            raise SpacerInputError(f"Error checking existence in S3: {str(e)}")
 
 
 class FileSystemStorage(Storage):
