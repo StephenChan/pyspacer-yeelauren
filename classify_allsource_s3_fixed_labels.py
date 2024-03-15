@@ -6,30 +6,29 @@ import json
 import logging
 import os
 import pickle
+import shutil
 import threading
 from datetime import datetime
 
 import boto3
 import duckdb
 import numpy as np
-import pandas as pd
 import psutil
 import pyarrow.parquet as pq
-import s3fs
 from botocore.exceptions import BotoCoreError, ClientError
-from dotenv import load_dotenv
 from pyarrow import fs
 from sklearn.model_selection import train_test_split
 
+from spacer import config
 from spacer.data_classes import ImageLabels
 from spacer.messages import DataLocation, TrainClassifierMsg, TrainingTaskLabels
+from spacer.storage import storage_factory
 from spacer.task_utils import preprocess_labels
 from spacer.tasks import (
     train_classifier,
 )
 
 
-load_dotenv()
 # Set up logging 
 logging.basicConfig(
     filename='app_all_source_la.log',
@@ -43,6 +42,17 @@ def log_memory_usage(message):
 
 logger = logging.getLogger(__name__)  # Create a logger for your script
 
+
+OUTPUT_BUCKET = 'coralnet-mermaid-share'
+OUTPUT_PATH = 'allsource'
+
+
+def write_bytestream_from_s3(output_storage, s3_filepath, out_stream):
+    in_stream = output_storage.load(s3_filepath)
+    in_stream.seek(0)
+    shutil.copyfileobj(in_stream, out_stream)
+
+
 logger.info('Setting up connections')
 log_memory_usage('Initial memory usage')
 # Set up connections
@@ -51,28 +61,18 @@ current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 bucketname = "coralnet-mermaid-share"
 prefix = "coralnet_public_features/"
 
-# Use Pandas and s3fs to read the csv from s3
-s3 = s3fs.S3FileSystem(
-    anon=False,
-    use_ssl=True,
-    client_kwargs={
-        "region_name": os.environ['S3_REGION'],
-        "endpoint_url": os.environ['S3_ENDPOINT'],
-        "aws_access_key_id": os.environ['S3_ACCESS_KEY'],
-        "aws_secret_access_key": os.environ['S3_SECRET_KEY'],
-        "verify": True,
-    }
-)
 # Use pyarrow to read the parquet file from S3
 fs = fs.S3FileSystem(
-    region=os.environ["S3_REGION"],
-    access_key=os.environ["S3_ACCESS_KEY"],
-    secret_key=os.environ["S3_SECRET_KEY"],
+    region=config.AWS_REGION,
+    access_key=config.AWS_ACCESS_KEY_ID,
+    secret_key=config.AWS_SECRET_ACCESS_KEY,
 )
 
 # TODO check this is the most efficient way to load in parquet
 # Load Parquet file from S3 bucket using s3_client
-parquet_file = "pyspacer-test/allsource/selected_sources_labels.parquet"
+parquet_file = (
+    "coralnet-mermaid-share"
+    "/multi_source_classifier/selected_sources_labels.parquet")
 logger.info('Reading parquet file from S3 bucket')
 log_memory_usage('Memory usage after reading parquet file')
 
@@ -99,6 +99,12 @@ labels_data = {
 log_memory_usage('Memory usage after creating train_labels_data and val_labels_data')
 logger.info('Create TrainClassifierMsg')
 
+output_storage = storage_factory('s3', OUTPUT_BUCKET)
+classifier_filename = f'classifier_all_source_{current_time}.pkl'
+classifier_filepath = f'{OUTPUT_PATH}/{classifier_filename}'
+valresult_filename = f'valresult_all_source_{current_time}.json'
+valresult_filepath = f'{OUTPUT_PATH}/{valresult_filename}'
+
 train_msg = TrainClassifierMsg(
     job_token="mulitest",
     trainer_name="minibatch",
@@ -108,10 +114,10 @@ train_msg = TrainClassifierMsg(
     features_loc=DataLocation("s3", bucket_name=bucketname, key=""),
     previous_model_locs=[],
     model_loc=DataLocation(
-        "s3", bucket_name="pyspacer-test", key="allsource" + f"/classifier_all_source_{current_time}.pkl"
+        "s3", bucket_name=OUTPUT_BUCKET, key=classifier_filepath
     ),
     valresult_loc=DataLocation(
-        "s3", bucket_name="pyspacer-test", key="allsource" + f"/valresult_all_source_{current_time}.json"
+        "s3", bucket_name=OUTPUT_BUCKET, key=valresult_filepath
     ),
 )
 logger.info('Train Classifier')
@@ -123,17 +129,15 @@ logger.info(f'Train time: {return_msg.runtime:.1f} s')
 log_memory_usage('Memory usage after training')
 logger.info('Write return_msg to S3')
 
+# Download results locally and delete from S3
+write_bytestream_from_s3(
+    output_storage, classifier_filepath, open(classifier_filename, 'wb'))
+write_bytestream_from_s3(
+    output_storage, valresult_filepath, open(valresult_filename, 'wb'))
+output_storage.delete(classifier_filepath)
+output_storage.delete(valresult_filepath)
 
 print(f"Train time: {return_msg.runtime:.1f} s")
-
-path = f'allsource/return_msg_all_source_{current_time}.pkl'
-
-# Use pickle to serialize the object
-return_msg_bytes = pickle.dumps(return_msg)
-
-# Use s3fs to write the bytes to the file
-with s3.open(path, 'wb') as f:
-    f.write(return_msg_bytes)
 
 ref_accs_str = ", ".join([f"{100*acc:.1f}" for acc in return_msg.ref_accs])
 

@@ -186,7 +186,6 @@ class S3Storage(RemoteStorage):
         s3 = config.get_s3_conn()
         try:
             s3.Object(self.bucket_name, key).load()
-            self.s3.Object(self.bucket_name, key).delete()
         except ClientError as e:
             raise SpacerInputError(f"Error deleting object from S3: {str(e)}")
     def exists(self, key: str)-> bool:

@@ -66,7 +66,13 @@ def train_classifier(msg: TrainClassifierMsg) -> TrainClassifierReturnMsg:
     @contextlib.contextmanager
     def wrapper():
         if msg.features_loc.is_remote:
-            with tempfile.TemporaryDirectory() as local_feature_dir:
+            # The dir argument here, if specified, says which directory
+            # the temp directory is created in; if not specified, it's
+            # an OS-assigned temp directory.
+            # TODO: Should be exposed to the caller as an optional parameter
+            #  of TrainClassifierMsg.
+            with tempfile.TemporaryDirectory(
+                    dir='/extravolume/feature_caching') as local_feature_dir:
                 msg.features_loc.set_filesystem_cache(local_feature_dir)
                 yield
         else:
