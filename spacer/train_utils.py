@@ -59,6 +59,10 @@ def train(train_labels: ImageLabels,
         refx, refy = load_batch_data(ref_labels, feature_loc)
         log_memory_usage('loaded batch data')
 
+    raise RuntimeError(
+        "Cutting training short; for now we're just testing up to loading"
+        " the ref set.")
+
     # Initialize classifier and ref set accuracy list
     with config.log_entry_and_exit("training using " + clf_type):
         if clf_type == 'MLP':
