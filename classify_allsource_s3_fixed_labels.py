@@ -148,3 +148,5 @@ print(
     "New model's accuracy progression (calculated on part of train_labels)"
     f" after each epoch of training: {ref_accs_str}"
 )
+logger.info('Done --------- Closing DuckDB connection')
+duckdb.close(conn)
